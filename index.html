@@ -1785,17 +1785,34 @@ async function findTtsModel(key){
   return ttsModelName;
 }
 function voiceFor(sc){return sc.interview||/sarah|linda|emma/i.test(sc.who||"")?"Kore":"Puck"}
-function stopGeminiVoice(){try{ttsSrc&&ttsSrc.stop()}catch(e){}ttsSrc=null}
-async function geminiSpeak(text,voice){
-  const key=getKey();if(!key||ttsOff)throw 0;const m=await findTtsModel(key);if(!m)throw 0;
-  const body=JSON.stringify({contents:[{parts:[{text:"Say naturally, like a real person on a phone call: "+text}]}],generationConfig:{responseModalities:["AUDIO"],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}}}});
+function stopGeminiVoice(){ttsRun++;try{ttsSrc&&ttsSrc.stop()}catch(e){}ttsSrc=null}
+// turns one piece of text into an audio buffer with Gemini's voice
+async function ttsBuffer(m,key,text,voice){
+  const body=JSON.stringify({contents:[{parts:[{text}]}],generationConfig:{responseModalities:["AUDIO"],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}}}});
   const {res,txt}=await gFetch(m,key,body,null,9000);
   if(!res.ok){if(res.status===429||res.status===403)ttsOff=true;if(res.status===404){ttsModelName="";try{localStorage.removeItem("otl_gemini_tts")}catch(e){}}throw 0}
   const d=JSON.parse(txt),p=((d.candidates||[])[0]||{}).content.parts.find(x=>x.inlineData||x.inline_data),inl=p.inlineData||p.inline_data;
   const rate=Number(((inl.mimeType||inl.mime_type||"").match(/rate=(\d+)/)||[])[1])||24000;
-  const bin=atob(inl.data),n=bin.length>>1;primeAudio();const ctx=ttsCtx;
-  const buf=ctx.createBuffer(1,n,rate),ch=buf.getChannelData(0);for(let i=0;i<n;i++){let v=bin.charCodeAt(2*i)|(bin.charCodeAt(2*i+1)<<8);if(v>=32768)v-=65536;ch[i]=v/32768}
-  stopGeminiVoice();try{speechSynthesis.cancel()}catch(e){}const src=ctx.createBufferSource();src.buffer=buf;src.connect(ctx.destination);src.start();ttsSrc=src;
+  const bin=atob(inl.data),n=bin.length>>1;primeAudio();
+  const buf=ttsCtx.createBuffer(1,n,rate),ch=buf.getChannelData(0);for(let i=0;i<n;i++){let v=bin.charCodeAt(2*i)|(bin.charCodeAt(2*i+1)<<8);if(v>=32768)v-=65536;ch[i]=v/32768}
+  return buf;
+}
+// the whole reply is voiced in one request (saves the daily voice limit)
+let ttsRun=0;
+async function geminiSpeak(text,voice){
+  const key=getKey();if(!key||ttsOff)throw 0;const m=await findTtsModel(key);if(!m)throw 0;
+  const run=++ttsRun;
+  const mm=null; // one request per reply, to save the daily voice limit
+  const first=mm?mm[1]:text,rest=mm?mm[2]:"";
+  const p1=ttsBuffer(m,key,first,voice),p2=rest?ttsBuffer(m,key,rest,voice).catch(()=>null):null;
+  const b1=await p1;if(run!==ttsRun)return;
+  try{ttsSrc&&ttsSrc.stop()}catch(e){}try{speechSynthesis.cancel()}catch(e){}
+  const ctx=ttsCtx,s1=ctx.createBufferSource();s1.buffer=b1;s1.connect(ctx.destination);const t0=ctx.currentTime+0.05;s1.start(t0);ttsSrc=s1;
+  if(!p2)return;
+  const b2=await p2;if(run!==ttsRun)return;
+  if(!b2){s1.onended=()=>{if(run===ttsRun)say(rest)};return}
+  const s2=ctx.createBufferSource();s2.buffer=b2;s2.connect(ctx.destination);s2.start(Math.max(ctx.currentTime,t0+b1.duration+0.08));
+  const prev=ttsSrc;ttsSrc={stop(){try{prev.stop()}catch(e){}try{s2.stop()}catch(e){}}};
 }
 // the other side of the call speaks with Gemini's voice when it can, otherwise with the device voice
 function sayCall(text){if(voiceOK()&&S.gvoice!==false&&call){geminiSpeak(text,voiceFor(call.sc)).catch(()=>say(text))}else say(text)}
