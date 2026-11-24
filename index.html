@@ -52,7 +52,6 @@ a{color:var(--sig)}
 .nav{display:flex;flex-direction:column;gap:4px}
 .nav button{appearance:none;border:0;background:none;color:var(--muted);font:600 .95rem var(--f-body);display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:12px;cursor:pointer;text-align:start;position:relative}
 .nav button svg{width:20px;height:20px;flex:0 0 20px}
-.nav button:hover{color:var(--ink);background:var(--raise)}
 .nav button[aria-current="page"]{color:var(--ink);background:linear-gradient(270deg,var(--accent-soft),transparent)}
 .nav button[aria-current="page"] svg{color:var(--accent)}
 .railfoot{margin-top:auto;display:flex;flex-direction:column;gap:12px}
@@ -88,21 +87,17 @@ footer{margin-top:26px;font-size:.8rem;color:var(--muted);text-align:center}
 .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
 .grid2>*,.grid3>*{min-width:0}
 .btn{appearance:none;border:1px solid var(--line);background:var(--raise);color:var(--ink);font:600 .92rem var(--f-body);padding:10px 18px;border-radius:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;transition:transform .12s,border-color .12s,filter .12s}
-.btn:hover{border-color:var(--accent)}
 .btn:active{transform:scale(.97)}
 .btn.primary{background:linear-gradient(140deg,var(--accent-2),var(--accent));color:var(--accent-ink);border-color:transparent;box-shadow:0 10px 24px -12px var(--accent)}
-.btn.primary:hover{filter:brightness(1.06)}
 .btn.ghost{background:transparent}
 .btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 60%,transparent);background:transparent}
 .btn[disabled]{opacity:.5;cursor:not-allowed}
 .ibtn{appearance:none;width:38px;height:38px;flex:0 0 38px;border-radius:50%;border:1px solid var(--line);background:var(--raise);color:var(--ink);display:inline-grid;place-items:center;cursor:pointer;transition:transform .12s,color .12s,border-color .12s}
-.ibtn:hover{border-color:var(--sig);color:var(--sig)}
 .ibtn:active{transform:scale(.92)}
 .ibtn svg{width:17px;height:17px}
 .ibtn.rec,.btn.rec{background:var(--bad);border-color:var(--bad);color:var(--bg);animation:recp 1.2s infinite}
 @keyframes recp{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--bad) 60%,transparent)}50%{box-shadow:0 0 0 8px transparent}}
 .chip{appearance:none;border:1px solid var(--line);background:var(--raise);color:var(--ink);font:500 .85rem var(--f-body);padding:6px 13px;border-radius:999px;cursor:pointer;text-decoration:none}
-.chip:hover{border-color:var(--sig)}
 .chip[aria-pressed="true"]{background:var(--sig-soft);border-color:var(--sig);color:var(--ink)}
 .pill{display:inline-block;font-size:.74rem;font-weight:600;padding:3px 10px;border-radius:999px;background:var(--sunk);color:var(--muted);border:1px solid var(--line)}
 .pill.good{background:var(--good-soft);color:var(--good);border-color:transparent}
@@ -141,7 +136,6 @@ textarea:focus,input:focus{border-color:var(--sig)}
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media (max-width:640px){.tiles{grid-template-columns:minmax(0,1fr)}}
 .tile{appearance:none;font:inherit;color:inherit;text-align:start;cursor:pointer;display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:14px;align-items:center;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:var(--raise);transition:transform .15s,border-color .15s}
-.tile:hover{transform:translateY(-2px);border-color:var(--sig)}
 .tile .t{font-weight:600}
 .mini{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--sig) calc(var(--p)*1%),var(--sunk) 0);position:relative}
 .mini::before{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--raise)}
@@ -203,7 +197,6 @@ textarea:focus,input:focus{border-color:var(--sig)}
 .bub.them{align-self:flex-start;background:var(--raise);border:1px solid var(--line);border-end-start-radius:5px}
 .bub .who{display:block;font-family:var(--f-mono);font-size:.66rem;letter-spacing:.08em;font-weight:600;color:var(--muted);margin-bottom:2px}
 .scen{display:flex;flex-direction:column;gap:8px;text-align:start;cursor:pointer;font:inherit;color:inherit;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:var(--shadow);transition:transform .15s,border-color .15s}
-.scen:hover{transform:translateY(-2px);border-color:var(--sig)}
 .scen.star{border-color:color-mix(in srgb,var(--accent) 60%,transparent);background:radial-gradient(360px 160px at 100% 0%,color-mix(in srgb,var(--accent) 20%,transparent),transparent 70%),var(--surface)}
 .score{font-family:var(--f-mono);font-size:3rem;font-weight:600;line-height:1;background:linear-gradient(140deg,var(--accent-2),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent}
 .mis{padding:11px 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
@@ -239,7 +232,6 @@ textarea:focus,input:focus{border-color:var(--sig)}
 .opts{display:grid;gap:10px}
 .opt{appearance:none;font:inherit;font-size:1.02rem;color:var(--ink);text-align:left;direction:ltr;cursor:pointer;background:var(--raise);border:1.5px solid var(--line);border-radius:14px;padding:13px 16px;transition:border-color .12s,transform .12s,background .12s}
 .opt.ar{direction:rtl;text-align:right}
-.opt:hover{border-color:var(--sig);background:var(--sig-soft)}
 .opt:active{transform:scale(.98)}
 .qtext{font-size:1.3rem;font-weight:600;line-height:1.5}
 .blank{display:inline-block;min-width:70px;border-bottom:2px solid var(--accent);margin-inline:4px}
@@ -269,6 +261,17 @@ textarea:focus,input:focus{border-color:var(--sig)}
 .tasbih{appearance:none;border:0;cursor:pointer;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:99px;background:#138556;color:#fff;font:600 .8rem var(--f-body);transition:transform .1s}
 .tasbih:active{transform:scale(.94)}
 .tasbih b{font-family:var(--f-mono);background:rgba(255,255,255,.22);border-radius:99px;padding:0 7px}
+/* hover styles only where there is a real mouse: on touch screens the highlight would stick to whatever appears under the finger next */
+@media (hover:hover) and (pointer:fine){
+  .nav button:hover{color:var(--ink);background:var(--raise)}
+  .btn:hover{border-color:var(--accent)}
+  .btn.primary:hover{filter:brightness(1.06)}
+  .ibtn:hover{border-color:var(--sig);color:var(--sig)}
+  .chip:hover{border-color:var(--sig)}
+  .tile:hover{transform:translateY(-2px);border-color:var(--sig)}
+  .scen:hover{transform:translateY(-2px);border-color:var(--sig)}
+  .opt:hover{border-color:var(--sig);background:var(--sig-soft)}
+}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 
@@ -1772,7 +1775,7 @@ function speakingHtml(c,r){
 }
 
 /* ---------------- natural voice for call replies (Gemini text-to-speech) ---------------- */
-let ttsModelName=null,ttsOff=false,ttsCtx=null,ttsSrc=null;
+let ttsWhy="",ttsTold="",ttsModelName=null,ttsOff=false,ttsCtx=null,ttsSrc=null;
 function primeAudio(){try{const AC=window.AudioContext||window.webkitAudioContext;if(!ttsCtx)ttsCtx=new AC();ttsCtx.resume()}catch(e){}}
 async function findTtsModel(key){
   if(ttsModelName!==null)return ttsModelName;
@@ -1790,7 +1793,7 @@ function stopGeminiVoice(){ttsRun++;try{ttsSrc&&ttsSrc.stop()}catch(e){}ttsSrc=n
 async function ttsBuffer(m,key,text,voice){
   const body=JSON.stringify({contents:[{parts:[{text}]}],generationConfig:{responseModalities:["AUDIO"],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}}}});
   const {res,txt}=await gFetch(m,key,body,null,9000);
-  if(!res.ok){if(res.status===429||res.status===403)ttsOff=true;if(res.status===404){ttsModelName="";try{localStorage.removeItem("otl_gemini_tts")}catch(e){}}throw 0}
+  if(!res.ok){ttsWhy=res.status===429?"limit":res.status===403?"denied":res.status===404?"nomodel":"error";if(res.status===429||res.status===403)ttsOff=true;if(res.status===404){ttsModelName="";try{localStorage.removeItem("otl_gemini_tts")}catch(e){}}throw 0}
   const d=JSON.parse(txt),p=((d.candidates||[])[0]||{}).content.parts.find(x=>x.inlineData||x.inline_data),inl=p.inlineData||p.inline_data;
   const rate=Number(((inl.mimeType||inl.mime_type||"").match(/rate=(\d+)/)||[])[1])||24000;
   const bin=atob(inl.data),n=bin.length>>1;primeAudio();
@@ -1800,7 +1803,7 @@ async function ttsBuffer(m,key,text,voice){
 // the whole reply is voiced in one request (saves the daily voice limit)
 let ttsRun=0;
 async function geminiSpeak(text,voice){
-  const key=getKey();if(!key||ttsOff)throw 0;const m=await findTtsModel(key);if(!m)throw 0;
+  const key=getKey();if(!key)throw 0;if(ttsOff)throw 0;const m=await findTtsModel(key);if(!m){ttsWhy="nomodel";throw 0}
   const run=++ttsRun;
   const mm=null; // one request per reply, to save the daily voice limit
   const first=mm?mm[1]:text,rest=mm?mm[2]:"";
@@ -1815,7 +1818,18 @@ async function geminiSpeak(text,voice){
   const prev=ttsSrc;ttsSrc={stop(){try{prev.stop()}catch(e){}try{s2.stop()}catch(e){}}};
 }
 // the other side of the call speaks with Gemini's voice when it can, otherwise with the device voice
-function sayCall(text){if(voiceOK()&&S.gvoice!==false&&call){geminiSpeak(text,voiceFor(call.sc)).catch(()=>say(text))}else say(text)}
+const TTS_WHY={limit:"صوت Gemini الطبيعي خلص حده المجاني لحد دلوقتي، فهتسمع صوت الجهاز. وهيرجع لما الحد يتجدد وتفتح الصفحة من جديد.",nomodel:"مفتاحك مش متاح له صوت Gemini الطبيعي، فهتسمع صوت الجهاز.",denied:"Google رفضت صوت Gemini لمفتاحك، فهتسمع صوت الجهاز.",error:"صوت Gemini ما ردش المرة دي، فشغّلت صوت الجهاز.",timeout:"صوت Gemini اتأخر، فشغّلت صوت الجهاز."};
+function sayCall(text){
+  if(voiceOK()&&S.gvoice!==false&&call){
+    geminiSpeak(text,voiceFor(call.sc)).then(()=>{ttsWhy="";ttsTold="";setVoiceTag("gemini")}).catch(e=>{
+      if(e&&e.code==="timeout")ttsWhy="timeout";
+      say(text);setVoiceTag("device");
+      // say why once per reason, so the switch to the device voice is never silent
+      if(ttsWhy&&ttsTold!==ttsWhy){ttsTold=ttsWhy;toast(TTS_WHY[ttsWhy]||TTS_WHY.error)}
+    });
+  }else say(text)
+}
+function setVoiceTag(k){const el=$("#voiceTag");if(el)el.textContent=k==="gemini"?"🔊 صوت Gemini":"🔊 صوت الجهاز"}
 /* ---------------- pronunciation check by Gemini (Sounds + Words) ---------------- */
 const SOUND_TIPS={
   TH_S:"TH مش S: طلّع طرف لسانك بين سنانك وانفخ هوا بالراحة، زي حرف الثاء.",
@@ -1891,7 +1905,7 @@ function mountCall(){
   const pool=sc.gen?CHUNKS.social.i.concat(CHUNKS.opinion.i,CHUNKS.travel.i):sc.interview?CHUNKS.interview.i:CHUNKS.empathy.i.concat(CHUNKS.hold.i,CHUNKS.clarify.i,CHUNKS.solve.i);
   const chips=opener.concat(shuffle(pool).slice(0,5).map(x=>x[2]||x[0]));
   $("#view").innerHTML=`<div class="stack">
-   <div class="callbar"><div><span class="livep"><i></i>${sc.interview?"إنترفيو":sc.gen?"محادثة":"مكالمة"}</span>${voiceOK()?' <span class="pill live">🎧 Gemini بيسمع صوتك</span>':""} <span class="who en">${esc(them)}</span> <span class="small" style="opacity:.75">${esc(sc.title)}</span></div><div class="row"><span class="mono small" style="opacity:.75">${c.ticket}</span><span class="mono" id="ctimer">00:00</span></div></div>
+   <div class="callbar"><div><span class="livep"><i></i>${sc.interview?"إنترفيو":sc.gen?"محادثة":"مكالمة"}</span>${voiceOK()?' <span class="pill live">🎧 Gemini بيسمع صوتك</span>':""}${voiceOK()&&S.gvoice!==false?' <span class="pill" id="voiceTag">🔊 بيجهّز الصوت</span>':""} <span class="who en">${esc(them)}</span> <span class="small" style="opacity:.75">${esc(sc.title)}</span></div><div class="row"><span class="mono small" style="opacity:.75">${c.ticket}</span><span class="mono" id="ctimer">00:00</span></div></div>
    <section class="panel stack">
      <div class="tx" id="tx"></div>
      <div id="callIn" class="stack" style="gap:8px">
