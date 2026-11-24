@@ -1,0 +1,28 @@
+name: Daily reminders
+
+on:
+  schedule:
+    - cron: "0 8 * * *"    # 10:00 Cairo (winter time, UTC+2)
+    - cron: "0 14 * * *"   # 16:00 Cairo
+    - cron: "0 19 * * *"   # 21:00 Cairo
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send push through OneSignal
+        env:
+          KEY: ${{ secrets.ONESIGNAL_KEY }}
+          APP: ${{ secrets.ONESIGNAL_APP_ID }}
+        run: |
+          H=$(TZ=Africa/Cairo date +%H)
+          if [ "$H" -lt 12 ]; then T="🔥 صباح الخير! 10 دقايق كروت وتحافظ على السلسلة";
+          elif [ "$H" -lt 18 ]; then T="🎧 وقت مكالمة أو حوار واحد. يلا";
+          else T="⏳ السلسلة مستنياك. خلّص مهمة النهارده قبل ما تنام"; fi
+          OWNER=$(echo "${GITHUB_REPOSITORY%%/*}" | tr '[:upper:]' '[:lower:]')
+          URL="https://$OWNER.github.io/${GITHUB_REPOSITORY##*/}/"
+          BODY=$(jq -n --arg app "$APP" --arg t "$T" --arg u "$URL" \
+            '{app_id:$app, target_channel:"push", included_segments:["Total Subscriptions"], headings:{en:"على الخط"}, contents:{en:$t}, url:$u}')
+          curl -sS --fail-with-body -X POST "https://api.onesignal.com/notifications" \
+            -H "Authorization: Key $KEY" -H "Content-Type: application/json" -d "$BODY"
