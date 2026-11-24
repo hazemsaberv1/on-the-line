@@ -255,6 +255,10 @@ textarea:focus,input:focus{border-color:var(--sig)}
 .snapcard .ms span{font-size:.7rem;font-weight:700;padding:1px 7px;border-radius:99px;background:rgba(255,255,255,.7);color:#8A4A1A}
 .snapcard .ms span.got{background:#E2601A;color:#fff}
 .formbox{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 14px;border-radius:14px;background:var(--accent-soft)}
+.shl{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px 12px;border-radius:12px;border:1.5px solid transparent;transition:background .2s,border-color .2s}
+.shl .spk{font-family:var(--f-mono);font-size:.66rem;letter-spacing:.06em;color:var(--muted);padding-top:3px;min-width:62px}
+.shl.now{border-color:var(--sig);background:var(--sig-soft)}
+.shl.you{border-color:var(--accent);background:var(--accent-soft)}
 /* dhikr */
 .dhikr{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px 9px 14px;border-radius:14px;background:#EEF8F2;border:1px solid #D3ECDD}
 .dhikr .zk{font-family:"Amiri","Readex Pro",serif;font-size:1.05rem;line-height:1.6;color:#0E5A3A;min-width:0}
@@ -370,7 +374,7 @@ const TASKS=[
   {id:"gram",t:"جرامر",d:"10 أسئلة قواعد أو جمل",goal:10,tab:"grammar",min:15},
   {id:"calls",t:"مكالمة أو محادثة",d:"محادثة كاملة + فيدباك",goal:1,tab:"call",min:25},
   {id:"use",t:"استخدمها في جملة",d:"3 جمل من عندك تتصحّحلك",goal:3,tab:"words",min:10},
-  {id:"shadow",t:"Shadowing",d:"اسمع مكالمة على يوتيوب وعيد وراها بنفس النبرة",manual:true,min:20}
+  {id:"shadow",t:"Shadowing",d:"اسمع مكالمة كاملة وعيد وراها (تاب سماع)",manual:true,tab:"listen",mode:"shadow",min:20}
 ];
 
 // [english, arabic, example]
@@ -1257,11 +1261,11 @@ function vToday(){
      <div class="wave" aria-hidden="true">${wave}</div>
    </section>`;
   const tiles=TS.map(t=>{const v=taskVal(d,t),g=t.goal||1,done=v>=g,p=Math.round(Math.min(1,v/g)*100);
-    const act=t.manual?`data-act="manual" data-id="${t.id}" aria-pressed="${done}"`:`data-act="nav" data-tab="${t.tab}"`;
+    const act=t.manual&&!t.tab?`data-act="manual" data-id="${t.id}" aria-pressed="${done}"`:`data-act="nav" data-tab="${t.tab}" ${t.mode?`data-mode="${t.mode}"`:""}`;
     return `<button class="tile ${done?"done":""}" ${act}>
       <span class="mini" style="--p:${p}">${done?IC.ok:(TIC[t.id==="use"?"use":(t.tab||t.id)]||TIC[t.id]||"")}</span>
       <span style="min-width:0"><span class="t">${t.t}</span>${t.boost?' <span class="pill live">×2 🔥</span>':""}<br><span class="muted small">${t.d} · ${t.min} دقيقة</span></span>
-      <span class="mono small ${done?"":"muted"}" style="${done?"color:var(--good)":""}">${t.manual?(done?"تمام":"علّم"):`${Math.min(v,g)}/${g}`}</span>
+      <span class="mono small ${done?"":"muted"}" style="${done?"color:var(--good)":""}">${t.manual?(done?"تمام":"ابدأ"):`${Math.min(v,g)}/${g}`}</span>
     </button>`}).join("");
   const heads=["اتنين","تلات","أربع","خميس","جمعة","سبت","حد"].map(h=>`<div class="h">${h}</div>`).join("");
   // calendar starts on the Monday of the challenge's first week
@@ -1293,7 +1297,7 @@ function vToday(){
        <div class="phase"><div class="pw" style="color:var(--accent)">${arDate(end)}</div><div><b>${end===DDAY&&S.goal!=="gen"?"الإنترفيو":"آخر يوم في التحدي"}</b></div></div></section>
    </div>
    ${vReminders()}
-   <section class="panel"><h3>Shadowing: اسمع وعيد</h3><p class="muted small" style="margin:4px 0 12px">شغّل مكالمة، ووقّفها بعد كل جملة، وعيدها بنفس السرعة والنبرة. ده أسرع طريقة تظبط بيها النطق والجرامر بالسمع.</p>
+   <section class="panel"><h3>Shadowing من يوتيوب (إضافي)</h3><p class="muted small" style="margin:4px 0 12px">شغّل مكالمة، ووقّفها بعد كل جملة، وعيدها بنفس السرعة والنبرة. ده أسرع طريقة تظبط بيها النطق والجرامر بالسمع.</p>
      <div class="row">${YT.map(([n,u])=>`<a class="chip" href="${u}" target="_blank" rel="noopener">${n}</a>`).join("")}</div></section>
   </div>`;
 }
@@ -1624,6 +1628,7 @@ function diffWords(target,typed){
   return {T,hit,pct:Math.round(hit.filter(Boolean).length/Math.max(1,n)*100)};
 }
 function sayDialog(d){
+  if(voiceOK()&&S.gvoice!==false&&!ttsOff){const run=++SH.run;(async()=>{for(const [w,t] of d.lines){if(run!==SH.run)return;await playLine(w,t)}})();return}
   const r=curRate(),lines=d.lines.map(([s,t])=>({text:t,voice:s==="a"?"buttery":"airy",language:"en"}));
   if(tts&&r>=0.7){tts.speak(lines,{rate:r}).catch(e=>{if(e&&["not_granted","unavailable","capability_disabled","capability_removed"].includes(e.code)){tts=null;browserDialog(d)}});return}
   browserDialog(d);
@@ -1634,8 +1639,9 @@ function browserDialog(d){
       const v=vs.length>1?vs[s==="a"?0:1]:vs[0];if(v)u.voice=v;u.pitch=s==="a"?1:1.25;speechSynthesis.speak(u)})}catch(e){}
 }
 function dlgList(){const w=lvl(),g=S.goal||"both";return DIALOGS.filter(d=>g==="both"||d.kind===g||Math.abs(d.lv-w)<=0).sort((a,b)=>Math.abs(a.lv-w)-Math.abs(b.lv-w))}
-function lModes(){return `<section class="panel stack" style="gap:10px;padding:14px 16px"><div class="row between"><div class="row" style="gap:6px"><button class="chip" data-act="l-mode" data-v="dict" aria-pressed="${L.mode==="dict"}">اسمع واكتب</button><button class="chip" data-act="l-mode" data-v="dlg" aria-pressed="${L.mode==="dlg"}">اسمع وجاوب</button></div><span class="small muted">النهارده: <b class="mono">${D().listen||0}</b></span></div>${speedChips()}</section>`}
+function lModes(){return `<section class="panel stack" style="gap:10px;padding:14px 16px"><div class="row between"><div class="row" style="gap:6px"><button class="chip" data-act="l-mode" data-v="dict" aria-pressed="${L.mode==="dict"}">اسمع واكتب</button><button class="chip" data-act="l-mode" data-v="dlg" aria-pressed="${L.mode==="dlg"}">اسمع وجاوب</button><button class="chip" data-act="l-mode" data-v="shadow" aria-pressed="${L.mode==="shadow"}">شادوينج</button></div><span class="small muted">النهارده: <b class="mono">${D().listen||0}</b></span></div>${speedChips()}</section>`}
 function vListen(){
+  if(L.mode==="shadow")return vShadow();
   if(L.mode==="dlg")return vDialog();
   if(!L.cur)nextDict();
   const r=L.res;
@@ -1830,6 +1836,120 @@ function sayCall(text){
   }else say(text)
 }
 function setVoiceTag(k){const el=$("#voiceTag");if(el)el.textContent=k==="gemini"?"🔊 صوت Gemini":"🔊 صوت الجهاز"}
+/* ---------------- SHADOWING inside the app: listen to a full call line by line and repeat in the pause ---------------- */
+// a/b = the two speakers; names says who they are
+const SH_EXTRA=[
+ {id:"sh-wifi",lv:1,kind:"cc",t:"الواي فاي بيفصل",names:["AGENT","CUSTOMER"],lines:[
+  ["a","Thanks for calling BrightNet support, this is Adam. How may I help you?"],
+  ["b","Hi, my Wi-Fi keeps disconnecting every few minutes."],
+  ["a","I'm sorry about that. Let's sort it out together. Are you near your router right now?"],
+  ["b","Yes, I'm right next to it."],
+  ["a","Perfect. Could you turn it off, wait thirty seconds, and then turn it back on?"],
+  ["b","Okay, it's back on now."],
+  ["a","Great. Is the light on the front green or orange?"],
+  ["b","It's green now."],
+  ["a","That means you're connected. If it happens again today, call us back and I'll raise a ticket for a technician."],
+  ["b","Thanks, that's really helpful."]]},
+ {id:"sh-refund",lv:2,kind:"cc",t:"فلوس المرتجع ما وصلتش",names:["AGENT","CUSTOMER"],lines:[
+  ["a","Thank you for calling ShopDirect, my name is Adam. How can I help you today?"],
+  ["b","Hi Adam. I returned a jacket two weeks ago, but I still haven't got my refund."],
+  ["a","I'm sorry to hear that. Could I have your order number, please?"],
+  ["b","Sure, it's seven, seven, eight, one, A, X."],
+  ["a","Thank you. Bear with me for a moment while I check that for you."],
+  ["a","Thanks for holding. I can see the jacket arrived at our warehouse on Monday."],
+  ["a","I've gone ahead and processed the refund. It'll reach your account within three to five business days."],
+  ["b","Great, thank you so much."],
+  ["a","You're welcome. Is there anything else I can help you with today?"],
+  ["b","No, that's all. Have a good day."],
+  ["a","You too. Thanks for calling ShopDirect."]]},
+ {id:"sh-interview",lv:2,kind:"cc",t:"إجابات إنترفيو نموذجية",names:["RECRUITER","CANDIDATE"],lines:[
+  ["a","So, tell me a little bit about yourself."],
+  ["b","Sure. My name is Omar, I'm twenty-four, and I graduated from Cairo University with a degree in commerce."],
+  ["b","For the last year, I've been working in sales, where I talk to customers every day."],
+  ["b","I'm a fast learner, I work well under pressure, and I really enjoy helping people."],
+  ["a","Why do you want to work in customer service?"],
+  ["b","Because I like solving problems, and I want to build a long-term career in an international company."],
+  ["a","How do you handle an angry customer?"],
+  ["b","First, I listen without interrupting. Then I apologize, show empathy, and explain clearly what I'm going to do to fix the problem."]]},
+ {id:"sh-small",lv:1,kind:"gen",t:"دردشة عن الويك إند",names:["A","B"],lines:[
+  ["a","Hey! How's it going?"],
+  ["b","Pretty good, thanks. How about you?"],
+  ["a","Not bad. How was your weekend?"],
+  ["b","It was great. I went to the beach with some friends."],
+  ["a","That sounds amazing. Which beach?"],
+  ["b","Ain Sokhna. The weather was perfect."],
+  ["a","Lucky you! I was stuck at home studying all weekend."]]}
+];
+function shList(){const w=lvl(),g=S.goal||"both";const all=SH_EXTRA.concat(DIALOGS.map(d=>Object.assign({names:d.kind==="cc"?["AGENT","CUSTOMER"]:["A","B"]},d)));
+  return all.filter(d=>g==="both"||d.kind===g||d.id==="sh-interview").sort((a,b)=>Math.abs(a.lv-w)-Math.abs(b.lv-w))}
+
+/* --- each sentence is voiced by Gemini once, then kept on this device (IndexedDB) and replayed from there --- */
+const idb=(()=>{let p=null;const open=()=>p||(p=new Promise((res,rej)=>{const r=indexedDB.open("otl-audio",1);r.onupgradeneeded=()=>r.result.createObjectStore("a");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}));
+  return {get:k=>open().then(db=>new Promise(res=>{const q=db.transaction("a").objectStore("a").get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)})).catch(()=>null),
+    set:(k,v)=>open().then(db=>new Promise(res=>{const t=db.transaction("a","readwrite");t.objectStore("a").put(v,k);t.oncomplete=()=>res(true);t.onerror=()=>res(false)})).catch(()=>false)}})();
+async function ttsCached(text,voice){
+  const k=voice+"|"+text;let v=await idb.get(k);
+  if(!v){
+    const key=getKey();if(!key||ttsOff)throw 0;const m=await findTtsModel(key);if(!m)throw 0;
+    const body=JSON.stringify({contents:[{parts:[{text}]}],generationConfig:{responseModalities:["AUDIO"],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}}}});
+    const {res,txt}=await gFetch(m,key,body,null,15000);
+    if(!res.ok){ttsWhy=res.status===429?"limit":"error";if(res.status===429||res.status===403)ttsOff=true;throw 0}
+    const d=JSON.parse(txt),p=((d.candidates||[])[0]||{}).content.parts.find(x=>x.inlineData||x.inline_data),inl=p.inlineData||p.inline_data;
+    v={rate:Number(((inl.mimeType||inl.mime_type||"").match(/rate=(\d+)/)||[])[1])||24000,data:inl.data};idb.set(k,v);
+  }
+  primeAudio();const bin=atob(v.data),n=bin.length>>1,buf=ttsCtx.createBuffer(1,n,v.rate),ch=buf.getChannelData(0);
+  for(let i=0;i<n;i++){let x=bin.charCodeAt(2*i)|(bin.charCodeAt(2*i+1)<<8);if(x>=32768)x-=65536;ch[i]=x/32768}
+  return buf;
+}
+function playBuf(buf){return new Promise(res=>{const src=ttsCtx.createBufferSource();src.buffer=buf;src.connect(ttsCtx.destination);src.onended=()=>res(buf.duration);ttsSrc=src;src.start()})}
+// device voice with an end signal; speaker b gets a different voice where the device has one
+function sayP(t,idx){return new Promise(res=>{try{const ss=speechSynthesis;ss.cancel();const u=new SpeechSynthesisUtterance(t);u.lang="en-US";u.rate=curRate();
+  const vs=(ss.getVoices()||[]).filter(v=>/^en[-_]/i.test(v.lang));let v=bestVoice||vs[0];
+  if(idx===1){const o=vs.find(x=>x!==bestVoice&&/natural|google|daniel|male|guy|david/i.test(x.name))||vs.find(x=>x!==bestVoice);if(o)v=o;else u.pitch=0.85}
+  if(v)u.voice=v;const t0=Date.now(),end=()=>res((Date.now()-t0)/1000);u.onend=end;u.onerror=end;ss.speak(u);setTimeout(end,t.length*120+4000)}catch(e){res(1)}})}
+function lineVoice(who){return who==="a"?"Kore":"Puck"}
+let geminiLines=true;
+async function playLine(who,text){
+  if(voiceOK()&&S.gvoice!==false&&!ttsOff&&geminiLines){try{const buf=await ttsCached(text,lineVoice(who));return await playBuf(buf)}catch(e){if(ttsWhy&&ttsTold!==ttsWhy){ttsTold=ttsWhy;toast(TTS_WHY[ttsWhy]||TTS_WHY.error)}}}
+  return await sayP(text,who==="a"?0:1);
+}
+
+let SH={id:null,i:-1,phase:"",run:0,playing:false};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function paintSh(){document.querySelectorAll(".shl").forEach((el,i)=>{el.classList.toggle("now",i===SH.i&&SH.phase==="listen");el.classList.toggle("you",i===SH.i&&SH.phase==="you");
+  const tag=el.querySelector(".shtag");if(tag)tag.textContent=i===SH.i?(SH.phase==="you"?"🗣️ دورك، عيدها":"🔊 اسمع"):""});
+  const cur=document.querySelector(".shl.now,.shl.you");if(cur)cur.scrollIntoView({block:"center",behavior:"smooth"})}
+async function shPlay(from){
+  const sc=shList().find(x=>x.id===SH.id);if(!sc)return;const run=++SH.run;SH.playing=true;render();
+  for(let i=from||0;i<sc.lines.length;i++){
+    if(run!==SH.run)return;SH.i=i;SH.phase="listen";paintSh();
+    const [who,text]=sc.lines[i];const dur=await playLine(who,text);
+    if(run!==SH.run)return;
+    // get the next sentence ready while you repeat this one
+    const nx=sc.lines[i+1];if(nx&&voiceOK()&&S.gvoice!==false&&!ttsOff)ttsCached(nx[1],lineVoice(nx[0])).catch(()=>{});
+    if(S.shGap!==false){SH.phase="you";paintSh();await sleep(Math.max(1800,dur*1150))}
+  }
+  if(run!==SH.run)return;
+  SH.playing=false;SH.i=-1;SH.phase="";S.shad=S.shad||{};S.shad[sc.id]=true;const d=D();d.shadow=true;save();render();toast("خلّصت الشادوينج ده 👏 عيده تاني بكرة وهتلاقي نفسك أسرع.");
+}
+function shStop(){SH.run++;SH.playing=false;SH.phase="";stopGeminiVoice();try{speechSynthesis.cancel()}catch(e){}render()}
+function vShadow(){
+  const done=S.shad||{};
+  if(!SH.id)return `<div class="stack">${lModes()}<section class="panel stack" style="gap:6px"><h3>شادوينج</h3>
+    <p class="small muted" style="max-width:62ch">مكالمات كاملة مكتوبة قدامك. كل جملة بتتقال، وبعدها فيه سكوت على قد الجملة عشان تعيدها بصوت عالي بنفس السرعة والنبرة. ده أسرع طريقة تظبط بيها النطق والجرامر بالسمع.</p>
+    ${voiceOK()&&S.gvoice!==false?`<p class="small muted">الصوت بصوت Gemini الطبيعي، وكل جملة بتتحفظ على جهازك أول مرة، فالتكرار بعد كده ما بيصرفش من الحد.</p>`:""}
+    ${shList().map(d=>`<div class="list-item"><div style="min-width:0"><b>${d.t}</b><div class="small muted"><span class="mono">${LV[d.lv]}</span> · ${d.kind==="cc"?"كول سنتر":"عام"} · ${d.lines.length} جمل</div></div><button class="btn ${done[d.id]?"ghost":""}" data-act="sh-open" data-id="${d.id}">${done[d.id]?"✓ عيده":"ابدأ"}</button></div>`).join("")}</section></div>`;
+  const sc=shList().find(x=>x.id===SH.id);
+  return `<div class="stack">${lModes()}<section class="card" style="min-height:0">
+    <div class="row between"><span class="pill">${esc(sc.t)} · <span class="mono">${LV[sc.lv]}</span></span><button class="btn ghost" data-act="sh-back">كل المكالمات</button></div>
+    <div class="row">${SH.playing?`<button class="btn" data-act="sh-stop">⏸ وقّف</button>`:`<button class="btn primary" data-act="sh-play">▶ ${SH.i>0?"كمّل":"ابدأ"}</button>`}
+      <button class="chip" data-act="sh-gap" aria-pressed="${S.shGap!==false}">وقفة عشان أعيد</button></div>
+    <div class="stack" style="gap:6px">${sc.lines.map(([who,text],i)=>`<div class="shl ${i===SH.i&&SH.phase==="listen"?"now":""} ${i===SH.i&&SH.phase==="you"?"you":""}">
+      <span class="spk">${esc(sc.names[who==="a"?0:1])}</span><span class="en" style="min-width:0">${esc(text)}<span class="shtag small" style="display:block;color:var(--accent);font-weight:600;direction:rtl;text-align:right"></span></span>
+      <button class="ibtn" data-act="sh-one" data-i="${i}" aria-label="اسمع الجملة">${IC.spk}</button></div>`).join("")}</div>
+  </section></div>`;
+}
+
 /* ---------------- pronunciation check by Gemini (Sounds + Words) ---------------- */
 const SOUND_TIPS={
   TH_S:"TH مش S: طلّع طرف لسانك بين سنانك وانفخ هوا بالراحة، زي حرف الثاء.",
@@ -2044,7 +2164,7 @@ function vProgress(){
 
 /* ---------------- events ---------------- */
 const H={
-  nav:el=>{if(call&&el.dataset.tab!=="call"){}go(el.dataset.tab)},
+  nav:el=>{if(el.dataset.mode){L.mode=el.dataset.mode;L.dlg=null;SH.id=null}go(el.dataset.tab)},
   say:el=>{if(call&&el.closest("#tx")){primeAudio();sayCall(el.dataset.text)}else say(el.dataset.text)},
   gvoice:()=>{S.gvoice=S.gvoice===false;save();render()},
   rate:el=>{S.rate=Number(el.dataset.v);save();render()},
@@ -2092,7 +2212,13 @@ const H={
   "push-on":()=>{if(!OS){toast("لحظة، الإشعارات لسه بتحمّل. جرّب كمان ثانيتين.");return}
     OS.Notifications.requestPermission().then(()=>{osPerm=!!OS.Notifications.permission;render();toast(osPerm?"🔔 تمام، الإشعارات اشتغلت":"الإشعارات اترفضت. تقدر تفعّلها من إعدادات المتصفح للموقع ده.")}).catch(()=>toast("ما قدرتش أفعّل الإشعارات هنا."))},
   "ios-ok":()=>{try{localStorage.setItem("otl_ios_tip","1")}catch(e){}render()},
-  "l-mode":el=>{L.mode=el.dataset.v;L.dlg=null;render()},
+  "sh-open":el=>{shStop();SH.id=el.dataset.id;SH.i=-1;render();window.scrollTo(0,0)},
+  "sh-back":()=>{shStop();SH.id=null;render()},
+  "sh-play":()=>{primeAudio();shPlay(SH.i>0?SH.i:0)},
+  "sh-stop":()=>shStop(),
+  "sh-gap":()=>{S.shGap=S.shGap===false;save();render()},
+  "sh-one":el=>{primeAudio();const sc=shList().find(x=>x.id===SH.id);if(!sc)return;SH.run++;SH.playing=false;const i=Number(el.dataset.i);SH.i=i;SH.phase="listen";paintSh();const [w,t]=sc.lines[i];playLine(w,t).then(()=>{if(!SH.playing){SH.phase="";paintSh()}})},
+  "l-mode":el=>{shStop();L.mode=el.dataset.v;L.dlg=null;render()},
   "l-play":()=>{if(!L.cur)nextDict();say(L.cur);L.plays++;const p=document.querySelector(".card .small.muted");if(p)p.textContent="اسمعت "+L.plays+" مرة"},
   "l-check":()=>{if(L.res){nextDict();render();setTimeout(()=>{const n=$("#lIn");n&&n.focus()},0);return}
     const i=$("#lIn");L.val=i?i.value:"";if(!L.val.trim()){toast(L.plays?"اكتب اللي سمعته الأول":"دوس على زرار الصوت واسمع الجملة الأول");return}
