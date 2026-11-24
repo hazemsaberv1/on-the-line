@@ -800,9 +800,27 @@ async function gFetch(m,key,body,signal){
     throw {code:"network",message:String(e&&e.message||e)};
   }finally{clearTimeout(to);if(signal)signal.removeEventListener("abort",onAbort)}
 }
-async function gCall(key,input,json,signal){
+// asks Google which models this key can use, and orders the "flash" ones newest first
+let gFound=null;
+async function discoverModels(key){
+  if(gFound)return gFound;
+  try{const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",{headers:{"x-goog-api-key":key}});
+    const d=await r.json();
+    const ok=(d.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent")).map(m=>String(m.name).replace(/^models\//,""))
+      .filter(n=>/^gemini/.test(n)&&/flash/.test(n)&&!/image|tts|audio|live|embedding|exp|vision|thinking/.test(n));
+    const ver=n=>{const v=(n.match(/gemini-(\d+(?:\.\d+)?)/)||[])[1];return v?parseFloat(v):(/latest/.test(n)?99:0)};
+    const score=n=>ver(n)*10-(/lite/.test(n)?3:0)-(/preview/.test(n)?2:0);
+    gFound=ok.sort((a,b)=>score(b)-score(a)).slice(0,5);
+    try{localStorage.setItem("otl_gemini_models",JSON.stringify(gFound))}catch(e){}
+  }catch(e){gFound=[]}
+  return gFound;
+}
+async function gCall(key,input,json,signal,again){
   // if one model is missing or out of free quota, try the next one
-  const models=gModel?[gModel].concat(GMODELS.filter(x=>x!==gModel)):GMODELS;let lastErr={code:"upstream_error",message:"no model answered"};
+  let saved=[];try{saved=JSON.parse(localStorage.getItem("otl_gemini_models")||"[]")}catch(e){}
+  const base=saved.length?saved:GMODELS;
+  const models=gModel?[gModel].concat(base.filter(x=>x!==gModel)):base;let lastErr={code:"upstream_error",message:"no model answered"};
+  const tried=[],all404=()=>tried.length&&tried.every(t=>/not found/.test(t));
   for(const m of models){
     const gc=Object.assign({temperature:json?.4:.9},json?{responseMimeType:"application/json"}:{},/^gemini-2\.5-flash/.test(m)?{thinkingConfig:{thinkingBudget:0}}:{});
     const body=JSON.stringify({contents:toContents(input),generationConfig:gc});
@@ -811,8 +829,8 @@ async function gCall(key,input,json,signal){
     catch(e){if(e.code==="timeout"||e.code==="network"){lastErr=e;if(e.code==="timeout")continue;throw e}throw e}
     const {res,txt}=r;let d=null;try{d=JSON.parse(txt)}catch(e){}
     const msg=((d&&d.error)||{}).message||"";
-    if(res.status===404){lastErr={code:"upstream_error",message:m+": not found"};continue}
-    if(res.status===429){lastErr={code:"rate_limited",message:msg};continue}
+    if(res.status===404){tried.push(m+": not found");lastErr={code:"upstream_error",message:tried.join(" | ")};continue}
+    if(res.status===429){tried.push(m+": limit");lastErr={code:"rate_limited",message:tried.join(" | ")+" "+msg.slice(0,80)};continue}
     if(!res.ok){
       if(res.status===401||res.status===403||/api key/i.test(msg))throw {code:"bad_key",message:msg};
       if(/location is not supported|not available in your country/i.test(msg))throw {code:"region",message:msg};
@@ -821,6 +839,13 @@ async function gCall(key,input,json,signal){
     const text=c&&c.content&&c.content.parts?c.content.parts.filter(p=>!p.thought).map(p=>p.text||"").join(""):"";
     if(!text){lastErr={code:"upstream_error",message:(c&&c.finishReason)||"empty answer"};continue}
     gModel=m;return text;
+  }
+  // every model name was unknown: ask Google for this key's models and try those once
+  if(!again&&(all404()||!saved.length)){
+    try{localStorage.removeItem("otl_gemini_models")}catch(e){}gFound=null;gModel=null;
+    const found=await discoverModels(key);
+    if(found.length&&found.some(f=>!models.includes(f)||all404())){try{localStorage.setItem("otl_gemini_models",JSON.stringify(found))}catch(e){}return gCall(key,input,json,signal,true)}
+    if(!found.length&&all404())lastErr={code:"upstream_error",message:"المفتاح ده مش شايف أي موديل Gemini Flash. "+tried.join(" | ")};
   }
   throw lastErr;
 }
