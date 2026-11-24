@@ -984,7 +984,9 @@ function mic(btn,o){
 }
 function aiErr(e){const c=e&&e.code;
   if(c==="bad_key")return "مفتاح Gemini مش شغال. اتأكد إنك نسخته كامل، أو اعمل مفتاح جديد.";
-  const det=e&&e.message?" (التفاصيل: "+String(e.message).slice(0,140)+")":"";
+  if(e&&e.message)try{console.warn("Gemini:",e.code,e.message)}catch(_){}
+  const sc=e&&e.message&&String(e.message).match(/\b([45]\d\d)\b/);
+  const det=c==="upstream_error"||c==="network"?" (كود: "+(sc?sc[1]:c==="network"?"NET":"AI")+")":"";
   if(c==="network")return "المتصفح ما قدرش يوصل لـ Google. لو عندك VPN أو Ad blocker أو Data saver اقفلهم، أو جرّب واي فاي تاني."+det;
   if(c==="timeout")return "Google اتأخرت في الرد. جرّب تاني، ولو اتكررت جرّب نت تاني.";
   if(c==="region")return "Google بتقول إن Gemini مش متاح من مكانك الحالي."+det;
@@ -1122,7 +1124,7 @@ async function finishTest(useAi){
     try{const d=await b64(T.audio.blob);
       const r=await sample.json([{role:"user",parts:[{text:`You are a strict but fair CEFR speaking examiner. Below is an AUDIO recording of an Egyptian learner answering: "Tell me about yourself and why you want to work in customer service."
 Listen to the audio itself. Judge pronunciation, fluency (speed, pauses, fillers), grammar, vocabulary range and coherence together, the way an IELTS/Versant examiner would.
-Reply with only JSON: {"level":"A2"|"A2+"|"B1"|"B1+"|"B2"|"B2+","why_ar":"one sentence in Egyptian Arabic: the main strength and the single most important thing to fix","pronunciation_ar":"one sentence in Egyptian Arabic about pronunciation","fluency_ar":"one sentence in Egyptian Arabic about fluency","transcript":"what the learner said"}`},{inline_data:{mime_type:"audio/wav",data:d}}]}],{});
+Reply with only JSON: {"level":"A2"|"A2+"|"B1"|"B1+"|"B2"|"B2+","why_ar":"one sentence in Egyptian Arabic (Arabic script, correct spelling, simple clear words): the main strength and the single most important thing to fix","pronunciation_ar":"one sentence in Egyptian Arabic (Arabic script, correct spelling, simple clear words) about pronunciation","fluency_ar":"one sentence in Egyptian Arabic (Arabic script, correct spelling, simple clear words) about fluency","transcript":"what the learner said"}`},{inline_data:{mime_type:"audio/wav",data:d}}]}],{});
       const i=LV.indexOf(String(r&&r.level));if(i>=0){ai=i;why=String(r.why_ar||"");spk={p:String(r.pronunciation_ar||""),f:String(r.fluency_ar||""),voice:true}}}
     catch(e){const m=aiErr(e);if(m)toast(m)}
     T.busy=false;
@@ -1130,7 +1132,7 @@ Reply with only JSON: {"level":"A2"|"A2+"|"B1"|"B1+"|"B2"|"B2+","why_ar":"one se
     T.busy=true;render();
     try{const r=await sample.json(`You are a CEFR speaking examiner. Rate this short answer by an Egyptian learner to "Tell me about yourself and why you want to work in customer service." It may come from speech-to-text, so ignore punctuation and capitalization.
 Answer: """${T.write.slice(0,1500)}"""
-Reply with only JSON: {"level":"A2"|"A2+"|"B1"|"B1+"|"B2"|"B2+","why_ar":"one sentence in Egyptian Arabic: the main strength and the single most important thing to fix"}`,{modelTier:"quick"});
+Reply with only JSON: {"level":"A2"|"A2+"|"B1"|"B1+"|"B2"|"B2+","why_ar":"one sentence in Egyptian Arabic (Arabic script, correct spelling, simple clear words): the main strength and the single most important thing to fix"}`,{modelTier:"quick"});
       const i=LV.indexOf(String(r&&r.level));if(i>=0){ai=i;why=String(r.why_ar||"")}}
     catch(e){const m=aiErr(e);if(m)toast(m)}
     T.busy=false;
@@ -1443,7 +1445,7 @@ async function genDrill(){
 Here are mistakes this learner actually made (wrong -> correct):
 ${mis.concat(weak).join("\n")}
 Create 8 NEW short sentences (call-center, interview or daily-life context) that each contain ONE mistake of the same types, so the learner practises fixing their own patterns. Vary the context; do not copy the originals.
-Reply with only a JSON array: [{"wrong":"...","ok":["the corrected sentence","optional alternative"],"tip":"one short reason in Egyptian Arabic"}]`,{cache:false});
+Reply with only a JSON array: [{"wrong":"...","ok":["the corrected sentence","optional alternative"],"tip":"one short reason in Egyptian Arabic (Arabic script, correct spelling, simple clear words)"}]`,{cache:false});
     const arr=(Array.isArray(r)?r:[]).filter(x=>x&&x.wrong&&Array.isArray(x.ok)&&x.ok.length).map(x=>({wrong:String(x.wrong),ok:x.ok.map(String),tip:String(x.tip||"")}));
     if(!arr.length)throw {code:"upstream_error"};
     G.gen=arr;G.src="gen";G.i=0;G.val="";G.res=null;
@@ -1463,14 +1465,14 @@ async function quickFix(){
   const b=$("#fixBox");if(b)G.fix=b.value;
   if(!G.fix.trim()||!sample||G.fixBusy)return;
   G.fixBusy=true;G.fixRes=null;render();
-  try{G.fixRes=await sample.json(checkPrompt(G.fix,null),{modelTier:"quick"})}catch(e){const m=aiErr(e);if(m)toast(m)}
+  try{G.fixRes=await sample.json(checkPrompt(G.fix,null),{})}catch(e){const m=aiErr(e);if(m)toast(m)}
   G.fixBusy=false;render();
 }
 function checkPrompt(sent,target){
   return `You check sentences for an Egyptian English learner (level ${LV[lvl()]}) preparing for a call-center job. ${target?`The learner was asked to use "${target}" in their own sentence.`:""}
 Sentence: """${sent.slice(0,600)}"""
 Judge grammar and natural word choice${target?` and whether "${target}" is used correctly with its right meaning`:""}. Ignore capitalization and punctuation. Small style differences are fine.
-Reply with only JSON: {"ok": true|false, "fixed": "corrected sentence (same meaning)", "why_ar": "one short explanation in Egyptian Arabic (if ok, a short encouraging note)", "natural": "optional more natural/professional version, or empty string"}`;
+Reply with only JSON: {"ok": true|false, "fixed": "corrected sentence (same meaning)", "why_ar": "one short explanation in Egyptian Arabic (Arabic script, correct spelling, simple clear words) (if ok, a short encouraging note)", "natural": "optional more natural/professional version, or empty string"}`;
 }
 
 let keyBusy=false,keyDraft="";
@@ -1749,7 +1751,7 @@ async function fbInput(c,P,meL){
   const parts=[{text:P+`
 
 You ALSO have the learner's real voice recordings below, one per ${meL} turn. Listen to them carefully and add to the JSON a "speaking" object:
-{"pronunciation_ar":"2 sentences in Egyptian Arabic about pronunciation (TH, P/B, V/F, word stress, clarity)","fluency_ar":"1-2 sentences in Egyptian Arabic about speed, pauses and fillers like uh/um","tone_ar":"1 sentence in Egyptian Arabic about how confident and friendly the voice sounds","words":[{"word":"the word as it should be","sounded_like":"how it actually sounded","tip_ar":"short tip in Egyptian Arabic"}]}
+{"pronunciation_ar":"2 sentences in Egyptian Arabic (Arabic script, correct spelling, simple clear words) about pronunciation (TH, P/B, V/F, word stress, clarity)","fluency_ar":"1-2 sentences in Egyptian Arabic (Arabic script, correct spelling, simple clear words) about speed, pauses and fillers like uh/um","tone_ar":"1 sentence in Egyptian Arabic (Arabic script, correct spelling, simple clear words) about how confident and friendly the voice sounds","words":[{"word":"the word as it should be","sounded_like":"how it actually sounded","tip_ar":"short tip in Egyptian Arabic (Arabic script, correct spelling, simple clear words)"}]}
 At most 6 words: only clear mispronunciations you actually heard. Judge pronunciation from the AUDIO, not from the transcript.`}];
   let budget=12e6;
   for(const m of c.msgs){if(m.audio==null)continue;const a=clips[m.audio];if(!a||a.silent)continue;const d=await b64(a.blob);if(d.length>budget)break;budget-=d.length;
@@ -1798,6 +1800,23 @@ async function geminiSpeak(text,voice){
 // the other side of the call speaks with Gemini's voice when it can, otherwise with the device voice
 function sayCall(text){if(voiceOK()&&S.gvoice!==false&&call){geminiSpeak(text,voiceFor(call.sc)).catch(()=>say(text))}else say(text)}
 /* ---------------- pronunciation check by Gemini (Sounds + Words) ---------------- */
+const SOUND_TIPS={
+  TH_S:"TH مش S: طلّع طرف لسانك بين سنانك وانفخ هوا بالراحة، زي حرف الثاء.",
+  TH_T:"TH مش T: لسانك يطلع بين سنانك، مش ورا سنانك، وانفخ هوا زي حرف الثاء.",
+  TH_D:"الـ TH هنا زي حرف الذال مش D: لسانك بين سنانك ومعاه صوت.",
+  TH_Z:"الـ TH هنا زي حرف الذال مش Z: طلّع طرف لسانك بين سنانك.",
+  P_B:"P مش B: نفس حركة الـ B بس من غير صوت ومع نفخة هوا. حط إيدك قدام بقك وحس بالهوا.",
+  B_P:"B مش P: لازم يبقى فيها صوت ومن غير نفخة هوا.",
+  V_F:"V مش F: سنانك الفوقانية على شفتك التحتانية ومعاها صوت (زنّة).",
+  F_V:"F مش V: سنانك على شفتك التحتانية، وهوا بس من غير صوت.",
+  W_V:"W مش V: ضم شفايفك كأنك هتقول (و) وما تلمسش سنانك.",
+  SILENT:"فيه حرف في الكلمة دي ما بيتنطقش. اسمعها تاني وركّز على الحرف الساكت.",
+  STRESS:"الضغط في الكلمة مش في مكانه. اسمعها تاني وقلّد المقطع اللي عليه الضغط.",
+  VOWEL:"صوت الحرف المتحرك مش مظبوط. اسمع الكلمة بالبطيء وقلّدها.",
+  ENDING:"آخر الكلمة مش مظبوط، زي -ed أو -s. اسمعها تاني وركّز على آخرها.",
+  UNCLEAR:"الكلمة ما وصلتش واضحة. قرّب من المايك وقولها بصوت أعلى وأبطأ.",
+  OTHER:"اسمع النطق الصح من زرار السماعة، وعيدها ببطء مرتين."
+};
 let hearBusy=false;
 function isStarting(){return !((REC.on&&REC.hear)||(dict&&dict.active&&dict.active()))}
 function clearSound(el,w){delete SR[w];const wd=el.closest(".wd");if(wd)wd.querySelectorAll(".r").forEach(p=>p.remove())
@@ -1816,8 +1835,9 @@ async function finishHear(){
   const {blob}=recStop();hearBusy=true;const old=h.btn.innerHTML;h.btn.innerHTML='<span class="spin"></span>';
   try{const d=await b64(blob);
     const r=await sample.json([{role:"user",parts:[{text:`An Egyptian English learner is practising pronunciation and tried to say: "${h.target}". Listen to the AUDIO. Write what you actually heard, spelled the way it sounded; do not auto-correct it to the target. "ok" is true only if a native listener would clearly understand it as the target with the key sounds right (TH, P/B, V/F, silent letters, word stress). If you heard nothing or only noise, set "heard" to "" and "ok" to false.
-Reply with only JSON: {"heard":"...","ok":true,"tip_ar":"if not ok: one short tip in Egyptian Arabic about the exact sound to fix; else empty"}`},{inline_data:{mime_type:"audio/wav",data:d}}]}],{modelTier:"quick"});
-    h.btn.innerHTML=old;h.done({heard:String(r&&r.heard||""),ok:!!(r&&r.ok),tip:String(r&&r.tip_ar||"")});
+If not ok, set "issue" to the single main problem, one of: TH_S (said S instead of TH), TH_T (T instead of TH), TH_D (D instead of voiced TH), TH_Z (Z instead of voiced TH), P_B (B instead of P), B_P (P instead of B), V_F (F instead of V), F_V (V instead of F), W_V (V instead of W), SILENT (pronounced a silent letter), STRESS (wrong word stress), VOWEL (wrong vowel sound), ENDING (dropped or added an ending sound like -ed, -s), UNCLEAR (too quiet, noisy or cut off), OTHER.
+Reply with only JSON: {"heard":"...","ok":true,"issue":""}`},{inline_data:{mime_type:"audio/wav",data:d}}]}],{modelTier:"quick"});
+    h.btn.innerHTML=old;const ok=!!(r&&r.ok);h.done({heard:String(r&&r.heard||""),ok,tip:ok?"":(SOUND_TIPS[String(r&&r.issue||"").toUpperCase()]||SOUND_TIPS.OTHER)});
   }catch(e){h.btn.innerHTML=old;const m=aiErr(e);if(m)toast(m)}
   hearBusy=false;
 }
@@ -1923,7 +1943,7 @@ async function feedback(){
   try{
     const P=(`You are an English coach for ${sc.gen?"Egyptian English learners":"Egyptian call-center job applicants"} (target: B2, Versant-style hiring standard). The learner's placement-test level is ${LV[lvl()]}; judge fairly for that level but score readiness for the job. Below is a practice ${sc.gen?"everyday English conversation":sc.interview?"job interview":"customer service call"} transcript. Evaluate ONLY the ${meL} lines (the learner). The lines may come from speech-to-text, so ignore capitalization and punctuation.
 Reply with only JSON of this shape:
-{"score": integer 1-10 (${sc.gen?"overall speaking quality for this level":"readiness for the job"}), "level": "A2"|"B1"|"B1+"|"B2"|"B2+"|"C1", "summary_ar": "2-3 sentences in Egyptian Arabic: what was good and the single most important thing to fix", "mistakes": [{"said": "the learner's exact words (short excerpt)", "better": "corrected natural version", "why_ar": "short reason in Egyptian Arabic"}], "phrases": [{"instead": "what the learner said", "use": "a more professional phrase"}], "skill_ar": "one practical tip in Egyptian Arabic about ${sc.gen?"keeping a conversation going naturally":sc.interview?"interview technique":"call handling (empathy, control, verification, closing)"}"}
+{"score": integer 1-10 (${sc.gen?"overall speaking quality for this level":"readiness for the job"}), "level": "A2"|"B1"|"B1+"|"B2"|"B2+"|"C1", "summary_ar": "2-3 sentences in Egyptian Arabic (Arabic script, correct spelling, simple clear words): what was good and the single most important thing to fix", "mistakes": [{"said": "the learner's exact words (short excerpt)", "better": "corrected natural version", "why_ar": "short reason in Egyptian Arabic (Arabic script, correct spelling, simple clear words)"}], "phrases": [{"instead": "what the learner said", "use": "a more professional phrase"}], "skill_ar": "one practical tip in Egyptian Arabic (Arabic script, correct spelling, simple clear words) about ${sc.gen?"keeping a conversation going naturally":sc.interview?"interview technique":"call handling (empathy, control, verification, closing)"}"}
 At most 8 mistakes, the most important first; skip trivial ones; empty list if none. At most 4 phrases.
 
 TRANSCRIPT:
@@ -2011,7 +2031,7 @@ const H={
   "w-use-mic":el=>{mic(el,{onFinal:t=>{const b=$("#useBox");if(b){b.value=(b.value+t).trimStart();W.use.val=b.value}}})},
   "w-use-check":async()=>{const b=$("#useBox");if(!b||!W.use)return;W.use.val=b.value;if(!b.value.trim()){toast("اكتب جملة الأول");return}
     const c=CARDS[W.use.id];W.useBusy=true;render();
-    try{W.use.res=await sample.json(checkPrompt(W.use.val,c.en),{modelTier:"quick"});D().use++;
+    try{W.use.res=await sample.json(checkPrompt(W.use.val,c.en),{});D().use++;
       if(W.use.res&&W.use.res.ok){const s=S.srs[c.id];if(s&&s.b>=1){}};save()}catch(e){const m=aiErr(e);if(m)toast(m)}
     W.useBusy=false;render()},
   // sounds
