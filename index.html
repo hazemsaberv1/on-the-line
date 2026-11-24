@@ -776,7 +776,7 @@ const STANDALONE=!(window.claude&&window.claude.use);
 const use=n=>STANDALONE?Promise.resolve(null):window.claude.use(n).catch(()=>null);
 
 /* --- Gemini: the free AI for people without Claude. Each person uses their own key, kept in their browser. --- */
-const GKEY="otl_gemini_key",GMODELS=["gemini-flash-latest","gemini-2.5-flash","gemini-2.0-flash"];
+const GKEY="otl_gemini_key",GMODELS=["gemini-2.5-flash","gemini-2.5-flash-lite","gemini-flash-latest","gemini-2.0-flash"];
 let gModel=null;
 function getKey(){try{return localStorage.getItem(GKEY)||""}catch(e){return ""}}
 function setKey(k){try{k?localStorage.setItem(GKEY,k):localStorage.removeItem(GKEY)}catch(e){}}
@@ -786,24 +786,41 @@ function toContents(input){
     if(last&&last.role===role)last.parts[0].text+="\n\n"+m.content;else out.push({role,parts:[{text:String(m.content)}]})});
   return out;
 }
+// one request with its own 40-second limit, so a stuck connection ends with a clear message instead of loading forever
+async function gFetch(m,key,body,signal){
+  const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),40000);
+  const onAbort=()=>ctl.abort();if(signal)signal.addEventListener("abort",onAbort);
+  try{
+    const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+m+":generateContent",{method:"POST",signal:ctl.signal,
+      headers:{"Content-Type":"application/json","x-goog-api-key":key},body});
+    const txt=await res.text();return {res,txt};
+  }catch(e){
+    if(signal&&signal.aborted)throw {code:"cancelled"};
+    if(ctl.signal.aborted)throw {code:"timeout"};
+    throw {code:"network",message:String(e&&e.message||e)};
+  }finally{clearTimeout(to);if(signal)signal.removeEventListener("abort",onAbort)}
+}
 async function gCall(key,input,json,signal){
-  const models=gModel?[gModel]:GMODELS;let lastErr={code:"upstream_error"};
+  // if one model is missing or out of free quota, try the next one
+  const models=gModel?[gModel].concat(GMODELS.filter(x=>x!==gModel)):GMODELS;let lastErr={code:"upstream_error",message:"no model answered"};
   for(const m of models){
-    let res;
-    try{res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+m+":generateContent",{method:"POST",signal,
-      headers:{"Content-Type":"application/json","x-goog-api-key":key},
-      body:JSON.stringify({contents:toContents(input),generationConfig:Object.assign({temperature:json?.4:.9},json?{responseMimeType:"application/json"}:{})})})}
-    catch(e){if(e&&e.name==="AbortError")throw {code:"cancelled"};throw {code:"network"}}
-    if(res.status===404){lastErr={code:"upstream_error"};continue}
-    if(!res.ok){let msg="";try{msg=((await res.json()).error||{}).message||""}catch(e){}
-      if(res.status===429)throw {code:"rate_limited"};
-      if(res.status===401||res.status===403||/api key/i.test(msg))throw {code:"bad_key"};
-      throw {code:"upstream_error",message:msg}}
-    gModel=m;
-    const d=await res.json(),c=d.candidates&&d.candidates[0];
+    const gc=Object.assign({temperature:json?.4:.9},json?{responseMimeType:"application/json"}:{},/^gemini-2\.5-flash/.test(m)?{thinkingConfig:{thinkingBudget:0}}:{});
+    const body=JSON.stringify({contents:toContents(input),generationConfig:gc});
+    let r;
+    try{r=await gFetch(m,key,body,signal)}
+    catch(e){if(e.code==="timeout"||e.code==="network"){lastErr=e;if(e.code==="timeout")continue;throw e}throw e}
+    const {res,txt}=r;let d=null;try{d=JSON.parse(txt)}catch(e){}
+    const msg=((d&&d.error)||{}).message||"";
+    if(res.status===404){lastErr={code:"upstream_error",message:m+": not found"};continue}
+    if(res.status===429){lastErr={code:"rate_limited",message:msg};continue}
+    if(!res.ok){
+      if(res.status===401||res.status===403||/api key/i.test(msg))throw {code:"bad_key",message:msg};
+      if(/location is not supported|not available in your country/i.test(msg))throw {code:"region",message:msg};
+      lastErr={code:"upstream_error",message:res.status+" "+msg};if(res.status>=500)continue;throw lastErr}
+    const c=d&&d.candidates&&d.candidates[0];
     const text=c&&c.content&&c.content.parts?c.content.parts.filter(p=>!p.thought).map(p=>p.text||"").join(""):"";
-    if(!text)throw {code:"upstream_error"};
-    return text;
+    if(!text){lastErr={code:"upstream_error",message:(c&&c.finishReason)||"empty answer"};continue}
+    gModel=m;return text;
   }
   throw lastErr;
 }
@@ -899,13 +916,16 @@ function mic(btn,o){
 }
 function aiErr(e){const c=e&&e.code;
   if(c==="bad_key")return "مفتاح Gemini مش شغال. اتأكد إنك نسخته كامل، أو اعمل مفتاح جديد.";
-  if(c==="network")return "مفيش إنترنت، أو Google مش بترد. جرّب تاني كمان شوية.";
-  if(c==="rate_limited"&&sample&&sample.gemini)return "وصلت لحد Gemini المجاني مؤقتاً. استنى دقيقة وجرّب تاني.";
+  const det=e&&e.message?" (التفاصيل: "+String(e.message).slice(0,140)+")":"";
+  if(c==="network")return "المتصفح ما قدرش يوصل لـ Google. لو عندك VPN أو Ad blocker أو Data saver اقفلهم، أو جرّب واي فاي تاني."+det;
+  if(c==="timeout")return "Google اتأخرت أكتر من 40 ثانية في الرد. جرّب تاني، ولو اتكررت جرّب نت تاني.";
+  if(c==="region")return "Google بتقول إن Gemini مش متاح من مكانك الحالي."+det;
+  if(c==="rate_limited"&&(getKey()||STANDALONE))return "وصلت لحد Gemini المجاني مؤقتاً. استنى دقيقة وجرّب تاني."+det;
   if(c==="not_granted"||c==="sampling_disabled")return "لازم تسمح للصفحة تستخدم Claude عشان الميزة دي تشتغل.";
   if(c==="rate_limited")return "وصلت لحد الاستخدام مؤقتاً. استنى شوية وجرّب تاني.";
   if(c==="session_expired")return "محتاج تعمل sign in تاني في claude.ai.";
   if(c==="cancelled")return "";
-  return "حصلت مشكلة في الاتصال. جرّب تاني.";
+  return "حصلت مشكلة في الاتصال. جرّب تاني."+det;
 }
 
 const AIN=()=>sample&&sample.gemini?"Gemini":"Claude";
@@ -1383,11 +1403,16 @@ function vSetup(){
   </section>`;
 }
 async function saveKey(){
-  const i=$("#gkey"),k=(i&&i.value||"").trim();
+  const i=$("#gkey"),k=(i&&i.value||"").replace(/[\s"'`]/g,"");
   if(!k){toast("حط المفتاح الأول");return}
-  if(keyBusy)return;keyDraft=k;keyBusy=true;render();
-  try{const t=geminiSample(k);await t("Reply with the single word OK.");setKey(k);sample=t;keyDraft="";toast("Gemini اشتغل. ابدأ أول مكالمة.")}
-  catch(e){toast(aiErr(e)||"المفتاح ما اشتغلش.")}
+  if(keyBusy)return;
+  // save first, so the key is kept even if the test call can't reach Google right now
+  setKey(k);sample=geminiSample(k);keyDraft="";keyBusy=true;render();
+  try{await sample("Reply with the single word OK.");toast("✅ المفتاح اتحفظ وGemini اشتغل. ابدأ أول مكالمة.")}
+  catch(e){
+    if(e&&e.code==="bad_key"){setKey("");sample=null;keyDraft=k;toast("Google بتقول إن المفتاح ده مش صح، فما اتحفظش. انسخه تاني كامل من AI Studio.")}
+    else toast("✅ المفتاح اتحفظ. بس التجربة الأولى ما وصلتش لـ Google دلوقتي، فجرّب مكالمة كمان شوية. "+(aiErr(e)||""));
+  }
   keyBusy=false;render();
 }
 /* ---------------- grammar rules: short lesson + 3 questions ---------------- */
