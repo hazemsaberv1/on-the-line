@@ -728,7 +728,7 @@ const IC={
 const spk=t=>`<button class="ibtn" data-act="say" data-text="${esc(t)}" aria-label="اسمع">${IC.spk}</button>`;
 const micb=(act,extra)=>`<button class="ibtn" data-act="${act}" ${extra||""} aria-label="اتكلم">${IC.mic}</button>`;
 let toastT;
-function toast(m){const t=$("#toast");t.textContent=m;t.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>t.hidden=true,3200)}
+function toast(m){const t=$("#toast");t.textContent=m;t.hidden=false;t.onclick=()=>{t.hidden=true;clearTimeout(toastT)};clearTimeout(toastT);toastT=setTimeout(()=>t.hidden=true,Math.min(15000,Math.max(6000,String(m).length*110)))}
 
 /* flatten decks */
 const CARDS={};
@@ -1369,7 +1369,7 @@ function rate(r){
 let SG="pb",SR={};
 function vSounds(){
   const g=SOUNDS.find(x=>x.id===SG);
-  const cell=w=>{const r=SR[w];return `<div class="wd">${spk(w)}${micb("s-mic",`data-w="${esc(w)}"`)}<span class="w">${esc(w)}</span>${r?`<span class="r pill ${r.ok?"good":"bad"}">${r.ok?"تمام":esc(r.heard||"؟")}</span>`:""}</div>`};
+  const cell=w=>{const r=SR[w];return `<div class="wd">${spk(w)}${micb("s-mic",`data-w="${esc(w)}"`)}<span class="w">${esc(w)}</span>${r?`<span class="r pill ${r.ok?"good":"bad"}">${r.ok?"تمام":esc(r.heard||"؟")}</span>`:""}${r&&!r.ok&&r.tip?`<div class="r small" style="flex-basis:100%;color:var(--bad);direction:rtl;text-align:right">${esc(r.tip)}</div>`:""}</div>`};
   return `<div class="stack">
    <section class="panel"><div class="row">${SOUNDS.map(s=>`<button class="chip" data-act="s-group" data-v="${s.id}" aria-pressed="${s.id===SG}">${s.n}</button>`).join("")}</div>
      <div class="row between" style="margin-top:12px">${speedChips()}<span class="small muted">النهارده: <b class="mono">${D().sounds}</b> محاولة</span></div>${curRate()<0.7?`<p class="small muted" style="margin-top:6px">في سرعة 0.5 بيتكلم صوت الجهاز بدل صوت Claude، لأن صوت Claude أبطأ حاجة فيه 0.7.</p>`:""}</section>
@@ -1382,7 +1382,7 @@ function vSounds(){
    <section class="panel"><h3 style="margin-bottom:6px">كلمات هتقولها في الشغل</h3>
      <div class="grid3">${g.words.map(w=>`<div>${cell(w)}${SG==="tricky"&&TRICKY_HINT[w]?`<div class="small muted" style="padding-inline-start:84px">${TRICKY_HINT[w]}</div>`:""}</div>`).join("")}</div></section>
    <section class="panel"><h3 style="margin-bottom:6px">جمل كاملة</h3>
-     ${g.sent.map(t=>{const r=SR[t];return `<div class="list-item"><div class="en" style="min-width:0">${esc(t)}${r?`<div class="small ${r.ok?"better":"said"}" style="text-decoration:none">${r.ok?"ممتاز":"سمعت: "+esc(r.heard)}</div>`:""}</div><div class="row">${spk(t)}${micb("s-mic",`data-w="${esc(t)}"`)}</div></div>`}).join("")}</section>
+     ${g.sent.map(t=>{const r=SR[t];return `<div class="list-item"><div class="en" style="min-width:0">${esc(t)}${r?`<div class="small ${r.ok?"better":"said"}" style="text-decoration:none">${r.ok?"ممتاز":"سمعت: "+esc(r.heard)}${!r.ok&&r.tip?`<div style="direction:rtl;text-align:right;color:var(--ink);margin-top:2px">${esc(r.tip)}</div>`:""}</div>`:""}</div><div class="row">${spk(t)}${micb("s-mic",`data-w="${esc(t)}"`)}</div></div>`}).join("")}</section>
   </div>`;
 }
 function judgeSound(target,heard){
@@ -1748,6 +1748,10 @@ function speakingHtml(c,r){
 
 /* ---------------- pronunciation check by Gemini (Sounds + Words) ---------------- */
 let hearBusy=false;
+function isStarting(){return !((REC.on&&REC.hear)||(dict&&dict.active&&dict.active()))}
+function clearSound(el,w){delete SR[w];const wd=el.closest(".wd");if(wd)wd.querySelectorAll(".r").forEach(p=>p.remove())
+  const li=el.closest(".list-item");if(li){const d=li.querySelector(".en > div");if(d)d.remove()}}
+function clearCard(){W.heard=null;const h=document.querySelector(".card .heard");if(h)h.remove()}
 function hearIt(btn,target,done){
   if(hearBusy)return;
   if(REC.on&&REC.hear){finishHear();return}
@@ -1950,7 +1954,7 @@ const H={
   "w-browse":()=>{W.browse=!W.browse;render()},
   "w-reveal":()=>{W.rev=true;render()},
   "w-rate":el=>rate(Number(el.dataset.r)),
-  "w-mic":el=>{const c=CARDS[W.q[W.i]];if(voiceOK())return hearIt(el,c.en.replace(/\.\.\./g,"").trim(),r=>{if(!r.heard){toast("ما سمعتش حاجة. دوس واتكلم على طول.");return}W.heard={text:r.heard,ok:r.ok,tip:r.tip};W.rev=true;D().sounds++;save();render()});mic(el,{auto:false,onDone:t=>{if(!t)return;const tw=words(c.en.replace(/\.\.\./g,"")),hw=new Set(words(t));let hit=0;tw.forEach(w=>{if(hw.has(w))hit++});W.heard={text:t,ok:hit/tw.length>=.75};W.rev=true;D().sounds++;save();render()}})},
+  "w-mic":el=>{const c=CARDS[W.q[W.i]];if(isStarting())clearCard();if(voiceOK())return hearIt(el,c.en.replace(/\.\.\./g,"").trim(),r=>{if(!r.heard){toast("ما سمعتش حاجة. دوس واتكلم على طول.");return}W.heard={text:r.heard,ok:r.ok,tip:r.tip};W.rev=true;D().sounds++;save();render()});mic(el,{auto:false,onDone:t=>{if(!t)return;const tw=words(c.en.replace(/\.\.\./g,"")),hw=new Set(words(t));let hit=0;tw.forEach(w=>{if(hw.has(w))hit++});W.heard={text:t,ok:hit/tw.length>=.75};W.rev=true;D().sounds++;save();render()}})},
   "w-use-open":()=>{W.use={id:W.q[W.i],val:"",res:null};render();setTimeout(()=>{const b=$("#useBox");b&&b.focus()},0)},
   "w-use-mic":el=>{mic(el,{onFinal:t=>{const b=$("#useBox");if(b){b.value=(b.value+t).trimStart();W.use.val=b.value}}})},
   "w-use-check":async()=>{const b=$("#useBox");if(!b||!W.use)return;W.use.val=b.value;if(!b.value.trim()){toast("اكتب جملة الأول");return}
@@ -1960,7 +1964,7 @@ const H={
     W.useBusy=false;render()},
   // sounds
   "s-group":el=>{SG=el.dataset.v;render()},
-  "s-mic":el=>{const w=el.dataset.w;if(voiceOK())return hearIt(el,w,r=>{if(!r.heard){toast("ما سمعتش حاجة. دوس واتكلم على طول.");return}SR[w]={ok:r.ok,heard:r.heard,tip:r.tip};D().sounds++;save();render();if(!r.ok&&r.tip)toast(r.tip)});const single=words(w).length===1;mic(el,{auto:single,onDone:t=>{if(!t&&!SR[w])return;SR[w]={ok:judgeSound(w,t),heard:t};D().sounds++;save();render()}})},
+  "s-mic":el=>{const w=el.dataset.w;if(isStarting())clearSound(el,w);if(voiceOK())return hearIt(el,w,r=>{if(!r.heard){toast("ما سمعتش حاجة. دوس واتكلم على طول.");return}SR[w]={ok:r.ok,heard:r.heard,tip:r.tip};D().sounds++;save();render();if(!r.ok&&r.tip)toast(r.tip)});const single=words(w).length===1;mic(el,{auto:single,onDone:t=>{if(!t&&!SR[w])return;SR[w]={ok:judgeSound(w,t),heard:t};D().sounds++;save();render()}})},
   // grammar
   "g-check":()=>gCheck(),
   "g-restart":()=>{G.src="base";G.q=gOrder();G.i=0;G.val="";G.res=null;render()},
