@@ -788,8 +788,8 @@ function toContents(input){
   return out;
 }
 // one request with its own 40-second limit, so a stuck connection ends with a clear message instead of loading forever
-async function gFetch(m,key,body,signal){
-  const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),40000);
+async function gFetch(m,key,body,signal,ms){
+  const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),ms||40000);
   const onAbort=()=>ctl.abort();if(signal)signal.addEventListener("abort",onAbort);
   try{
     const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+m+":generateContent",{method:"POST",signal:ctl.signal,
@@ -816,20 +816,50 @@ async function discoverModels(key){
   }catch(e){gFound=[]}
   return gFound;
 }
-async function gCall(key,input,json,signal,again){
-  // if one model is missing or out of free quota, try the next one
+/* --- one model, chosen once: when the key is saved, the app races Google's flash models and keeps the fastest that answers --- */
+function getPin(){try{return localStorage.getItem("otl_gemini_pin")||""}catch(e){return ""}}
+function setPin(m){try{m?localStorage.setItem("otl_gemini_pin",m):localStorage.removeItem("otl_gemini_pin")}catch(e){}}
+async function pickModel(key){
+  const found=await discoverModels(key);
+  const cands=(found.length?found:GMODELS).slice(0,5);
+  const tryOne=m=>gFetch(m,key,JSON.stringify({contents:[{role:"user",parts:[{text:"Reply with the single word OK."}]}],generationConfig:Object.assign({maxOutputTokens:30},thinkCfg(m,true))}),null,10000)
+    .then(({res,txt})=>{if(res.ok)return m;let msg="";try{msg=(JSON.parse(txt).error||{}).message||""}catch(e){}
+      if(res.status===400&&/think/i.test(msg)){NOTHINK.add(m);return gFetch(m,key,JSON.stringify({contents:[{role:"user",parts:[{text:"Reply with the single word OK."}]}],generationConfig:{maxOutputTokens:30}}),null,10000).then(r=>{if(r.res.ok)return m;throw {code:"upstream_error",message:m+": "+r.res.status}})}
+      if(res.status===401||res.status===403||/api key/i.test(msg))throw {code:"bad_key",message:msg};
+      throw {code:res.status===429?"rate_limited":"upstream_error",message:m+": "+res.status+" "+msg.slice(0,80)}});
+  try{const m=await Promise.any(cands.map(tryOne));setPin(m);gModelFast=m;return m}
+  catch(agg){const errs=(agg&&agg.errors)||[];throw errs.find(e=>e&&e.code==="bad_key")||errs.find(e=>e&&e.code==="rate_limited")||errs[0]||{code:"upstream_error"}}
+}
+// models that rejected a thinking setting; we then call them without it
+const NOTHINK=new Set();let gModelFast=null;
+function thinkCfg(m,fast){
+  if(!fast)return {};
+  if(/^gemini-2\.5/.test(m))return {thinkingConfig:{thinkingBudget:0}};
+  if(NOTHINK.has(m))return {};
+  return {thinkingConfig:{thinkingLevel:"low"}};
+}
+async function gCall(key,input,json,signal,again,fast){
+  // if one model is missing or out of free quota, try the next one; "fast" (live call turns) puts the lighter models first
   let saved=[];try{saved=JSON.parse(localStorage.getItem("otl_gemini_models")||"[]")}catch(e){}
-  const base=saved.length?saved:GMODELS;
-  const models=gModel?[gModel].concat(base.filter(x=>x!==gModel)):base;let lastErr={code:"upstream_error",message:"no model answered"};
+  let base=(saved.length?saved:GMODELS).slice();
+  if(fast)base.sort((a,b)=>(/lite/.test(b)?1:0)-(/lite/.test(a)?1:0));
+  const pick=fast?(getPin()||gModelFast):gModel;
+  const models=pick?[pick].concat(base.filter(x=>x!==pick)):base;let lastErr={code:"upstream_error",message:"no model answered"};
   const tried=[],all404=()=>tried.length&&tried.every(t=>/not found/.test(t));
+  const hasAudio=Array.isArray(input)&&input.some(x=>x&&x.parts&&x.parts.some(p=>p.inline_data));
   for(const m of models){
-    const gc=Object.assign({temperature:json?.4:.9},json?{responseMimeType:"application/json"}:{},/^gemini-2\.5-flash/.test(m)?{thinkingConfig:{thinkingBudget:0}}:{});
-    const body=JSON.stringify({contents:toContents(input),generationConfig:gc});
-    let r;
-    try{r=await gFetch(m,key,body,signal)}
-    catch(e){if(e.code==="timeout"||e.code==="network"){lastErr=e;if(e.code==="timeout")continue;throw e}throw e}
-    const {res,txt}=r;let d=null;try{d=JSON.parse(txt)}catch(e){}
-    const msg=((d&&d.error)||{}).message||"";
+    let r,res,txt,d,msg;
+    for(let attempt=0;attempt<2;attempt++){
+      const gc=Object.assign({temperature:json?.4:.9},json?{responseMimeType:"application/json"}:{},thinkCfg(m,fast));
+      const body=JSON.stringify({contents:toContents(input),generationConfig:gc});
+      try{r=await gFetch(m,key,body,signal,fast?(hasAudio?10000:5000):60000)}
+      catch(e){if(e.code==="timeout"||e.code==="network"){lastErr=e;if(e.code==="timeout"){r=null;break}throw e}throw e}
+      res=r.res;txt=r.txt;d=null;try{d=JSON.parse(txt)}catch(e){}
+      msg=((d&&d.error)||{}).message||"";
+      if(res.status===400&&/think/i.test(msg)&&!NOTHINK.has(m)){NOTHINK.add(m);continue}
+      break;
+    }
+    if(!r)continue;
     if(res.status===404){tried.push(m+": not found");lastErr={code:"upstream_error",message:tried.join(" | ")};continue}
     if(res.status===429){tried.push(m+": limit");lastErr={code:"rate_limited",message:tried.join(" | ")+" "+msg.slice(0,80)};continue}
     if(!res.ok){
@@ -839,20 +869,22 @@ async function gCall(key,input,json,signal,again){
     const c=d&&d.candidates&&d.candidates[0];
     const text=c&&c.content&&c.content.parts?c.content.parts.filter(p=>!p.thought).map(p=>p.text||"").join(""):"";
     if(!text){lastErr={code:"upstream_error",message:(c&&c.finishReason)||"empty answer"};continue}
-    gModel=m;return text;
+    if(fast)gModelFast=m;else gModel=m;return text;
   }
   // every model name was unknown: ask Google for this key's models and try those once
   if(!again&&(all404()||!saved.length)){
-    try{localStorage.removeItem("otl_gemini_models")}catch(e){}gFound=null;gModel=null;
+    try{localStorage.removeItem("otl_gemini_models")}catch(e){}gFound=null;gModel=null;gModelFast=null;
     const found=await discoverModels(key);
-    if(found.length&&found.some(f=>!models.includes(f)||all404())){try{localStorage.setItem("otl_gemini_models",JSON.stringify(found))}catch(e){}return gCall(key,input,json,signal,true)}
+    if(found.length&&found.some(f=>!models.includes(f)||all404())){try{localStorage.setItem("otl_gemini_models",JSON.stringify(found))}catch(e){}return gCall(key,input,json,signal,true,fast)}
     if(!found.length&&all404())lastErr={code:"upstream_error",message:"المفتاح ده مش شايف أي موديل Gemini Flash. "+tried.join(" | ")};
   }
   throw lastErr;
 }
 function geminiSample(key){
-  const f=async(input,o={})=>{const text=await gCall(key,input,false,o.signal);o.onText&&o.onText({text,delta:text});return {text,truncated:false}};
-  f.json=async(input,o={})=>{const t=await gCall(key,input,true,o.signal);try{return JSON.parse(t.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g,""))}catch(e){throw {code:"upstream_error"}}};
+  // a key saved before this version gets its fast model chosen on first use
+  const ensure=async()=>{if(!getPin()){try{await pickModel(key)}catch(e){if(e&&e.code==="bad_key")throw e}}};
+  const f=async(input,o={})=>{await ensure();const text=await gCall(key,input,false,o.signal,false,o.modelTier==="quick");o.onText&&o.onText({text,delta:text});return {text,truncated:false}};
+  f.json=async(input,o={})=>{await ensure();const t=await gCall(key,input,true,o.signal,false,o.modelTier==="quick");try{return JSON.parse(t.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g,""))}catch(e){throw {code:"upstream_error"}}};
   f.gemini=true;return f;
 }
 
@@ -864,12 +896,14 @@ function webDict(){
   const setState=(s,reason)=>{state=s;emit(st,reason?{state:s,reason}:{state:s})};
   return {
     active:()=>state!=="idle",
-    start(){if(rec)return Promise.resolve();return new Promise((res,rej)=>{
-      const r=new SR();rec=r;r.lang="en-US";r.interimResults=true;r.continuous=true;let reason="stopped",live=false;
+    start(){if(rec){try{rec.abort()}catch(e){}rec=null;state="idle"}return new Promise((res,rej)=>{
+      // one phrase per tap: Chrome ends on its own after you stop talking, and a 10-second guard ends it if it doesn't
+      const r=new SR();rec=r;r.lang="en-US";r.interimResults=true;r.continuous=false;r.maxAlternatives=1;let reason="stopped",live=false;
+      const guard=setTimeout(()=>{if(rec===r)try{r.stop()}catch(e){}},10000);
       r.onstart=()=>{live=true;setState("listening");res()};
       r.onresult=e=>{let interim="";for(let i=e.resultIndex;i<e.results.length;i++){const x=e.results[i];if(x.isFinal){emit(par,{text:""});emit(fin,{text:" "+x[0].transcript.trim()})}else interim+=x[0].transcript}if(interim)emit(par,{text:interim})};
-      r.onerror=e=>{reason=(e.error==="not-allowed"||e.error==="service-not-allowed")?"not_granted":(e.error==="aborted"||e.error==="no-speech")?"stopped":"upstream_error";if(!live)rej({code:reason})};
-      r.onend=()=>{rec=null;setState("idle",reason)};
+      r.onerror=e=>{reason=(e.error==="not-allowed"||e.error==="service-not-allowed")?"not_granted":e.error==="no-speech"?"no_speech":e.error==="aborted"?"stopped":"upstream_error";if(!live)rej({code:reason})};
+      r.onend=()=>{clearTimeout(guard);if(rec===r)rec=null;setState("idle",reason)};
       setState("starting");try{r.start()}catch(err){rec=null;setState("idle","upstream_error");rej({code:"upstream_error"})}
     })},
     stop(){if(rec&&state!=="finishing"){setState("finishing");try{rec.stop()}catch(e){}}return Promise.resolve()},
@@ -914,7 +948,10 @@ use("sample").then(s=>{if(s)sample=s;render()});
 const RATES=[[0.5,"0.5x"],[0.75,"0.75x"],[1,"1x"]];
 function curRate(){return S.rate||(S.slow?.75:1)}
 function speedChips(){return `<div class="row"><span class="small muted">سرعة الصوت:</span>${RATES.map(([v,n])=>`<button class="chip mono" data-act="rate" data-v="${v}" aria-pressed="${curRate()===v}">${n}</button>`).join("")}</div>`}
-function browserSay(t){try{const u=new SpeechSynthesisUtterance(t);u.lang="en-US";u.rate=curRate();speechSynthesis.cancel();speechSynthesis.speak(u)}catch(e){}}
+// Chrome sometimes drops speech said right after cancel(), or stays stuck "paused"; wait a beat and resume first
+function browserSay(t){try{const ss=window.speechSynthesis;if(!ss)return;const busy=ss.speaking||ss.pending;if(busy)ss.cancel();ss.resume();
+  const go=()=>{const u=new SpeechSynthesisUtterance(t);u.lang="en-US";u.rate=curRate();const v=(ss.getVoices()||[]).find(x=>/^en(-|_)US/i.test(x.lang));if(v)u.voice=v;ss.speak(u)};
+  busy?setTimeout(go,120):go()}catch(e){}}
 function say(t){
   const r=curRate();
   // Claude's voice goes down to 0.7; slower than that uses the device voice
@@ -927,7 +964,7 @@ function mic(btn,o){
   if(!dict){toast(STANDALONE?"المايك محتاج Chrome على الكمبيوتر أو الأندرويد. هنا اكتب بدل ما تتكلم.":"الميكروفون مش متاح هنا. افتح الصفحة في Chrome أو في تطبيق Claude للديسكتوب، أو اكتب بدل ما تتكلم.");return}
   if(dict.active()){dict.stop().catch(()=>{});return}
   let all="",started=false,done=false;const offs=[];
-  const finish=r=>{if(done)return;done=true;offs.forEach(f=>f());btn.classList.remove("rec");o.onDone&&o.onDone(all.trim(),r)};
+  const finish=r=>{if(done)return;done=true;offs.forEach(f=>f());btn.classList.remove("rec");if(r==="no_speech"&&!all.trim())toast("ما سمعتش حاجة. قرّب من المايك واتكلم بعد ما تدوس على طول.");o.onDone&&o.onDone(all.trim(),r)};
   offs.push(dict.onFinal(({text})=>{all+=text;o.onFinal&&o.onFinal(text);if(o.auto)dict.stop().catch(()=>{})}));
   if(o.onPartial)offs.push(dict.onPartial(({text})=>o.onPartial(text)));
   offs.push(dict.onState(({state,reason})=>{if(state!=="idle"){started=true;btn.classList.add("rec")}else if(started)finish(reason)}));
@@ -1073,8 +1110,18 @@ function scoreTest(){
   return {idx,gram:pct(x=>!x.listen),listen:pct(x=>!!x.listen)};
 }
 async function finishTest(useAi){
-  const sc=scoreTest();let ai=null,why="";
-  if(useAi&&sample&&T.write.trim().split(/\s+/).length>=8){
+  const sc=scoreTest();let ai=null,why="",spk=null;
+  const hasVoice=!!(T.audio&&T.audio.dur>=4&&sample&&sample.gemini);
+  if(useAi&&sample&&hasVoice){
+    T.busy=true;render();
+    try{const d=await b64(T.audio.blob);
+      const r=await sample.json([{role:"user",parts:[{text:`You are a strict but fair CEFR speaking examiner. Below is an AUDIO recording of an Egyptian learner answering: "Tell me about yourself and why you want to work in customer service."
+Listen to the audio itself. Judge pronunciation, fluency (speed, pauses, fillers), grammar, vocabulary range and coherence together, the way an IELTS/Versant examiner would.
+Reply with only JSON: {"level":"A2"|"A2+"|"B1"|"B1+"|"B2"|"B2+","why_ar":"one sentence in Egyptian Arabic: the main strength and the single most important thing to fix","pronunciation_ar":"one sentence in Egyptian Arabic about pronunciation","fluency_ar":"one sentence in Egyptian Arabic about fluency","transcript":"what the learner said"}`},{inline_data:{mime_type:"audio/wav",data:d}}]}],{});
+      const i=LV.indexOf(String(r&&r.level));if(i>=0){ai=i;why=String(r.why_ar||"");spk={p:String(r.pronunciation_ar||""),f:String(r.fluency_ar||""),voice:true}}}
+    catch(e){const m=aiErr(e);if(m)toast(m)}
+    T.busy=false;
+  }else if(useAi&&sample&&T.write.trim().split(/\s+/).length>=8){
     T.busy=true;render();
     try{const r=await sample.json(`You are a CEFR speaking examiner. Rate this short answer by an Egyptian learner to "Tell me about yourself and why you want to work in customer service." It may come from speech-to-text, so ignore punctuation and capitalization.
 Answer: """${T.write.slice(0,1500)}"""
@@ -1085,7 +1132,7 @@ Reply with only JSON: {"level":"A2"|"A2+"|"B1"|"B1+"|"B2"|"B2+","why_ar":"one se
   }
   let idx=sc.idx;if(ai!=null){idx=Math.round((sc.idx+ai)/2);if(sc.idx>=4&&ai>=5)idx=5}
   const k=today();if(!S.start)S.start=startDay();
-  S.tests.push({d:k,idx,mcq:sc.idx,ai,gram:sc.gram,listen:sc.listen,why});
+  S.tests.push({d:k,idx,mcq:sc.idx,ai,gram:sc.gram,listen:sc.listen,why,spk});
   W.q=null;G.q=null;T={step:"result"};save();render();window.scrollTo(0,0);
 }
 function vTest(){
@@ -1100,9 +1147,16 @@ function vTest(){
   if(T.step==="write")return `<div class="stack"><section class="card" style="min-height:0">
     <div class="row between"><span class="pill live">آخر سؤال</span><span class="mono small muted">كلام</span></div>
     <p class="en qtext">Tell me about yourself and why you want to work in customer service.</p>
-    <p class="small muted">3 لـ 5 جمل. ما تقلقش من الغلط، الإجابة دي بتوضّح مستواك الحقيقي في الكلام.</p>
-    <div class="composer">${micb("t-mic")}<textarea id="tW" rows="4" class="en" placeholder="My name is ... I want to work in customer service because ...">${esc(T.write)}</textarea><span></span></div>
-    <div class="row"><button class="btn primary" data-act="t-ai" ${T.busy?"disabled":""}>${T.busy?'<span class="spin"></span> بيقيّم...':"خلّص وشوف مستواك"}</button><button class="btn ghost" data-act="t-skip" ${T.busy?"disabled":""}>تخطّى</button></div>
+    ${voiceOK()?`<p class="small muted">اتكلم من 30 ثانية لدقيقة. Gemini هيسمع صوتك نفسه ويقيّم نطقك وطلاقتك وجرامرك، والنتيجة دي هي مستواك في الـ Speaking.</p>
+    <div class="row" style="gap:10px">
+      <button class="btn ${T.recOn?"rec":"primary"}" data-act="t-rec" ${T.busy?"disabled":""}>${T.recOn?"⏹ وقّف التسجيل":(T.audio?"🎙️ سجّل تاني":"🎙️ سجّل إجابتك")}</button>
+      ${T.audio&&!T.recOn?'<button class="chip" data-act="t-play-me">▶ اسمع تسجيلك</button>':""}
+      <span class="small muted" id="tRecInfo">${T.recOn?"بيسجّل...":(T.audio?"سجّلت "+Math.round(T.audio.dur)+" ثانية":"")}</span>
+    </div>
+    <details><summary class="small muted" style="cursor:pointer">أو اكتب بدل ما تتكلم</summary><textarea id="tW" rows="4" class="en" style="margin-top:8px" placeholder="My name is ... I want to work in customer service because ...">${esc(T.write)}</textarea></details>`
+    :`<p class="small muted">3 لـ 5 جمل. ما تقلقش من الغلط، الإجابة دي بتوضّح مستواك الحقيقي في الكلام.</p>
+    <div class="composer">${micb("t-mic")}<textarea id="tW" rows="4" class="en" placeholder="My name is ... I want to work in customer service because ...">${esc(T.write)}</textarea><span></span></div>`}
+    <div class="row"><button class="btn primary" data-act="t-ai" ${T.busy||T.recOn?"disabled":""}>${T.busy?'<span class="spin"></span> بيقيّم...':"خلّص وشوف مستواك"}</button><button class="btn ghost" data-act="t-skip" ${T.busy?"disabled":""}>تخطّى</button></div>
   </section></div>`;
   const x=T.items[T.i],N=T.items.length,qh=esc(x.q).replace("___",'<span class="blank"></span>');
   return `<div class="stack"><section class="card" style="min-height:0">
@@ -1121,8 +1175,9 @@ function vResult(){
     <div class="row between"><span class="pill live">${S.tests.length>1?"نتيجة اختبار التقدم":"نتيجة اختبار المستوى"}</span><span class="small muted">${arDate(t.d)}</span></div>
     <div class="row" style="gap:20px;align-items:flex-end"><div class="lvl-big">${LV[t.idx]}</div><div style="min-width:0;flex:1"><h2 style="font-size:1.3rem">${LV_AR[t.idx]}</h2>${moved?`<p class="muted small" style="margin-top:4px">${moved}</p>`:""}</div></div>
     ${ladder(t.idx,p.real,"هدف "+end)}
-    <div class="grid3"><div class="kpi"><div class="label">جرامر وكلمات</div><b>${t.gram}%</b></div><div class="kpi"><div class="label">سماع</div><b>${t.listen}%</b></div>${t.ai!=null?`<div class="kpi"><div class="label">كلامك</div><b>${LV[t.ai]}</b></div>`:""}</div>
+    <div class="grid3"><div class="kpi"><div class="label">جرامر وكلمات</div><b>${t.gram}%</b></div><div class="kpi"><div class="label">سماع</div><b>${t.listen}%</b></div>${t.ai!=null?`<div class="kpi"><div class="label">${t.spk&&t.spk.voice?"Speaking (من صوتك)":"كلامك (مكتوب)"}</div><b>${LV[t.ai]}</b></div>`:""}</div>
     ${t.why?`<div class="mouth">${esc(t.why)}</div>`:""}
+    ${t.spk&&(t.spk.p||t.spk.f)?`<div class="stack" style="gap:4px">${t.spk.p?`<div><b>النطق:</b> ${esc(t.spk.p)}</div>`:""}${t.spk.f?`<div><b>الطلاقة:</b> ${esc(t.spk.f)}</div>`:""}</div>`:""}
     <div class="note"><b>هتوصل فين يوم ${end}؟</b> ${p.real>t.idx?`لو التزمت 70% من الأيام على الأقل، هتوصل <b class="mono">${LV[p.real]}</b>.`:`الوقت قصير على درجة جديدة، فهدفك إنك تبقى أقوى جوّه <b class="mono">${LV[t.idx]}</b>.`} ${projNote(t.idx,p.stretch)}</div>
     <div class="row"><button class="btn primary" data-act="nav" data-tab="today">ابدأ خطتك</button></div>
   </section></div>`;
@@ -1281,8 +1336,8 @@ function vCard(){
   return `<section class="card">
     <div class="row between"><span class="pill">${esc(tag)}</span><span class="mono small muted">${W.i+1}/${W.q.length}${s?"":" · جديدة"}</span></div>
     <div><div class="label">قولها بالإنجليزي</div><div class="prompt">${esc(c.ar)}</div></div>
-    <div class="row">${micb("w-mic")}<span class="small muted">${dict?"دوس واتكلم، وأنا هقولك قلتها صح ولا لأ":"قولها بصوت عالي لنفسك قبل ما تكشف الإجابة"}</span></div>
-    ${h?`<div class="heard ${h.ok?"good":"bad"}">${h.ok?"صح! ":"سمعتك قلت: "}<span class="en">${esc(h.text||"—")}</span></div>`:""}
+    <div class="row">${micb("w-mic")}<span class="small muted">${voiceOK()?"دوس واتكلم. Gemini هيسمعك ويقولك نطقك صح ولا لأ":dict?"دوس واتكلم، وأنا هقولك قلتها صح ولا لأ":"قولها بصوت عالي لنفسك قبل ما تكشف الإجابة"}</span></div>
+    ${h?`<div class="heard ${h.ok?"good":"bad"}">${h.ok?"صح! ":"سمعتك قلت: "}<span class="en">${esc(h.text||"—")}</span>${!h.ok&&h.tip?`<div style="margin-top:4px;color:var(--ink)">${esc(h.tip)}</div>`:""}</div>`:""}
     ${W.rev?`<div class="row" style="gap:8px"><div class="answer en">${esc(c.en)}</div>${spk(c.en)}</div>
       ${c.ex?`<div class="ex row between" style="flex-wrap:nowrap"><span class="en" style="min-width:0">${esc(c.ex)}</span>${spk(c.ex)}</div>`:""}
       ${vUse(c)}
@@ -1433,8 +1488,8 @@ async function saveKey(){
   if(!k){toast("حط المفتاح الأول");return}
   if(keyBusy)return;
   // save first, so the key is kept even if the test call can't reach Google right now
-  setKey(k);sample=geminiSample(k);keyDraft="";keyBusy=true;render();
-  try{await sample("Reply with the single word OK.");toast("✅ المفتاح اتحفظ وGemini اشتغل. ابدأ أول مكالمة.")}
+  setKey(k);setPin("");try{localStorage.removeItem("otl_gemini_models")}catch(e){}gFound=null;gModel=null;gModelFast=null;sample=geminiSample(k);keyDraft="";keyBusy=true;render();
+  try{const m=await pickModel(k);toast("✅ المفتاح اتحفظ، واخترنالك أسرع موديل: "+m+". ابدأ أول مكالمة.")}
   catch(e){
     if(e&&e.code==="bad_key"){setKey("");sample=null;keyDraft=k;toast("Google بتقول إن المفتاح ده مش صح، فما اتحفظش. انسخه تاني كامل من AI Studio.")}
     else toast("✅ المفتاح اتحفظ. بس التجربة الأولى ما وصلتش لـ Google دلوقتي، فجرّب مكالمة كمان شوية. "+(aiErr(e)||""));
@@ -1651,7 +1706,7 @@ async function voiceTurn(blob,dur){
 IMPORTANT: my next turn is an AUDIO recording of me speaking English. First transcribe EXACTLY what I said, word for word, without fixing my grammar; if I mispronounce a word, write the word it actually sounded like. Then answer in character.
 Reply with only JSON: {"heard":"exact transcript of my audio","reply":"your spoken reply in character","end":false}. Set "end" to true only when the conversation is naturally finished (use this instead of writing [END]).`;
     const input=[{role:"user",content:sys}].concat(c.msgs.map(m=>({role:m.role,content:m.content})),[{role:"user",parts:[{text:"(my turn, as audio)"},{inline_data:{mime_type:"audio/wav",data}}]}]);
-    const r=await sample.json(input,{signal:c.ctl.signal});
+    const r=await sample.json(input,{signal:c.ctl.signal,modelTier:"quick"});
     if(call!==c)return;
     const heard=String(r&&r.heard||"").trim()||"(مش واضح)",reply=String(r&&r.reply||"").replace(/\[END\]/g,"").trim();
     if(me)me.remove();
@@ -1691,6 +1746,26 @@ function speakingHtml(c,r){
   </div>`;
 }
 
+/* ---------------- pronunciation check by Gemini (Sounds + Words) ---------------- */
+let hearBusy=false;
+function hearIt(btn,target,done){
+  if(hearBusy)return;
+  if(REC.on&&REC.hear){finishHear();return}
+  try{speechSynthesis.cancel()}catch(e){}
+  const short=words(target).length<=2;
+  recStart().then(()=>{btn.classList.add("rec");REC.hear={btn,target,done};REC.auto=setTimeout(finishHear,short?2500:7000)})
+    .catch(()=>{recCancel();toast("المايك مقفول. اسمح للموقع يستخدم الميكروفون من إعدادات المتصفح وجرّب تاني.")});
+}
+async function finishHear(){
+  const h=REC.hear;if(!h||!REC.on)return;clearTimeout(REC.auto);REC.hear=null;h.btn.classList.remove("rec");
+  const {blob}=recStop();hearBusy=true;const old=h.btn.innerHTML;h.btn.innerHTML='<span class="spin"></span>';
+  try{const d=await b64(blob);
+    const r=await sample.json([{role:"user",parts:[{text:`An Egyptian English learner is practising pronunciation and tried to say: "${h.target}". Listen to the AUDIO. Write what you actually heard, spelled the way it sounded; do not auto-correct it to the target. "ok" is true only if a native listener would clearly understand it as the target with the key sounds right (TH, P/B, V/F, silent letters, word stress). If you heard nothing or only noise, set "heard" to "" and "ok" to false.
+Reply with only JSON: {"heard":"...","ok":true,"tip_ar":"if not ok: one short tip in Egyptian Arabic about the exact sound to fix; else empty"}`},{inline_data:{mime_type:"audio/wav",data:d}}]}],{modelTier:"quick"});
+    h.btn.innerHTML=old;h.done({heard:String(r&&r.heard||""),ok:!!(r&&r.ok),tip:String(r&&r.tip_ar||"")});
+  }catch(e){h.btn.innerHTML=old;const m=aiErr(e);if(m)toast(m)}
+  hearBusy=false;
+}
 /* ---------------- CALL ---------------- */
 let call=null,callDom=false,timerI=null;
 function vCall(){
@@ -1714,7 +1789,7 @@ Rules: stay in character as the customer; speak naturally like a real caller, 1-
 }
 function startCall(id){
   const sc=SCEN.find(s=>s.id===id);if(!sc)return;
-  call={sc,msgs:[],t0:Date.now(),ticket:"INC-"+Math.floor(100000+Math.random()*899999),ended:false,busy:false,ctl:null,fb:null,fbBusy:false,draft:""};
+  call={sc,msgs:[],t0:Date.now(),ticket:"INC-"+Math.floor(100000+Math.random()*899999),ended:false,busy:false,ctl:null,fb:null,fbBusy:false,draft:"",started:!(sc.interview||sc.gen)};
   callDom=false;render();
   if(sc.interview||sc.gen)aiTurn();
 }
@@ -1742,7 +1817,7 @@ function mountCall(){
   if(c.fb)renderFb();
   clearInterval(timerI);timerI=setInterval(tick,1000);tick();
 }
-function tick(){const el=$("#ctimer");if(!el||!call){clearInterval(timerI);return}if(call.ended&&call.tEnd){}else{const s=Math.floor((Date.now()-call.t0)/1000);el.textContent=pad(Math.floor(s/60))+":"+pad(s%60)}}
+function tick(){const el=$("#ctimer");if(!el||!call){clearInterval(timerI);return}if(!call.started){el.textContent="بيرن…";return}if(call.ended&&call.tEnd){}else{const s=Math.floor((Date.now()-call.t0)/1000);el.textContent=pad(Math.floor(s/60))+":"+pad(s%60)}}
 function addBub(role,text,ai){
   const tx=$("#tx");if(!tx)return null;
   const p=tx.querySelector("p.muted");if(p)p.remove();
@@ -1750,6 +1825,7 @@ function addBub(role,text,ai){
   el.className="bub en "+(role==="user"?"me":"them");
   el.innerHTML=`<span class="who">${role==="user"?(sc.interview||sc.gen?"YOU":"AGENT (YOU)"):esc(sc.interview?"RECRUITER":sc.who.toUpperCase())}</span><span class="t"></span>`;
   el.querySelector(".t").textContent=text;
+  if(role!=="user"&&text&&text!=="…"){const b=document.createElement("button");b.className="chip";b.style.cssText="margin-top:6px;font-size:.75rem;padding:2px 10px";b.dataset.act="say";b.dataset.text=text;b.textContent="🔊 اسمع";el.appendChild(b)}
   if(ai!=null&&call.audio&&call.audio[ai]){const b=document.createElement("button");b.className="chip";b.style.cssText="margin-top:6px;font-size:.75rem;padding:2px 10px";b.dataset.act="play-me";b.dataset.i=ai;b.textContent="▶ اسمع صوتك";el.appendChild(b)}
   tx.appendChild(el);tx.scrollTop=tx.scrollHeight;return el;
 }
@@ -1770,8 +1846,10 @@ async function aiTurn(){
   try{
     const {text}=await sample(input,{cache:false,modelTier:"quick",signal:c.ctl.signal,onText:({text})=>{if(tEl)tEl.textContent=text.replace("[END]","").trim()}});
     if(call!==c)return;
+    if(!c.started){c.started=true;c.t0=Date.now();tick()}
     const endHit=text.includes("[END]"),clean=text.replace(/\[END\]/g,"").trim();
     c.msgs.push({role:"assistant",content:clean});if(tEl)tEl.textContent=clean;
+    if(el&&clean){const b=document.createElement("button");b.className="chip";b.style.cssText="margin-top:6px;font-size:.75rem;padding:2px 10px";b.dataset.act="say";b.dataset.text=clean;b.textContent="🔊 اسمع";el.appendChild(b)}
     if(S.voice)say(clean);
     if(endHit){c.ended=true;const eb=$("#endBtn");if(eb){eb.textContent="الفيدباك";eb.classList.add("primary")}toast("المكالمة خلصت. دوس الفيدباك.")}
   }catch(e){
@@ -1851,7 +1929,7 @@ function vProgress(){
    </div>
    ${S.tests.length?`<section class="panel stack" style="gap:14px"><div class="row between"><h3>مستواك</h3><button class="btn" data-act="test-go">اعمل الاختبار تاني</button></div>${ladder(lvl(),project(lvl()).real,"هدف "+arDate(endDay()))}<div class="small muted">${S.tests.map(t=>`<span class="mono">${arDate(t.d)}: ${LV[t.idx]}</span>`).join(" · ")}</div></section>`:`<section class="panel row between"><div><h3>لسه ما عملتش اختبار المستوى</h3><p class="small muted">10 دقايق بيظبطوا الخطة على مستواك.</p></div><button class="btn primary" data-act="test-go">ابدأ الاختبار</button></section>`}
    <section class="panel"><h3 style="margin-bottom:8px">درجة آخر المكالمات</h3>${chart}<p class="small muted">الهدف: 8 أو أكتر بشكل ثابت قبل 5 يناير.</p></section>
-   ${STANDALONE?(sample?`<section class="panel row between"><div><h3>Gemini شغال</h3><p class="small muted">المفتاح محفوظ في المتصفح ده بس.</p></div><button class="btn danger" data-act="key-del">امسح المفتاح</button></section>`:vSetup()):""}
+   ${STANDALONE?(sample?`<section class="panel row between"><div><h3>Gemini شغال</h3><p class="small muted">المفتاح محفوظ في المتصفح ده بس.${getPin()?' الموديل السريع: <span class="en mono">'+esc(getPin())+'</span>':""}</p></div><button class="btn danger" data-act="key-del">امسح المفتاح</button></section>`:vSetup()):""}
    <section class="panel stack" style="gap:10px"><h3>بتتعلم عشان إيه؟</h3><p class="small muted">بيغيّر الكلمات اللي بتظهرلك الأول، والخطة، والمحادثات المقترحة.</p><div class="row" style="gap:6px">${goalChips()}</div></section>
    <section class="panel"><h3>بداية جديدة</h3><p class="small muted" style="margin:4px 0 10px">بيمسح كل التقدم وسجل الأغلاط.</p>
      ${confirmReset?`<div class="row"><span>متأكد؟ مش هينفع ترجعه.</span><button class="btn danger" data-act="reset-yes">أيوه امسح</button><button class="btn" data-act="reset-no">لأ</button></div>`:`<button class="btn danger" data-act="reset-ask">امسح التقدم</button>`}</section>
@@ -1872,7 +1950,7 @@ const H={
   "w-browse":()=>{W.browse=!W.browse;render()},
   "w-reveal":()=>{W.rev=true;render()},
   "w-rate":el=>rate(Number(el.dataset.r)),
-  "w-mic":el=>{const c=CARDS[W.q[W.i]];mic(el,{auto:false,onDone:t=>{if(!t)return;const tw=words(c.en.replace(/\.\.\./g,"")),hw=new Set(words(t));let hit=0;tw.forEach(w=>{if(hw.has(w))hit++});W.heard={text:t,ok:hit/tw.length>=.75};W.rev=true;D().sounds++;save();render()}})},
+  "w-mic":el=>{const c=CARDS[W.q[W.i]];if(voiceOK())return hearIt(el,c.en.replace(/\.\.\./g,"").trim(),r=>{if(!r.heard){toast("ما سمعتش حاجة. دوس واتكلم على طول.");return}W.heard={text:r.heard,ok:r.ok,tip:r.tip};W.rev=true;D().sounds++;save();render()});mic(el,{auto:false,onDone:t=>{if(!t)return;const tw=words(c.en.replace(/\.\.\./g,"")),hw=new Set(words(t));let hit=0;tw.forEach(w=>{if(hw.has(w))hit++});W.heard={text:t,ok:hit/tw.length>=.75};W.rev=true;D().sounds++;save();render()}})},
   "w-use-open":()=>{W.use={id:W.q[W.i],val:"",res:null};render();setTimeout(()=>{const b=$("#useBox");b&&b.focus()},0)},
   "w-use-mic":el=>{mic(el,{onFinal:t=>{const b=$("#useBox");if(b){b.value=(b.value+t).trimStart();W.use.val=b.value}}})},
   "w-use-check":async()=>{const b=$("#useBox");if(!b||!W.use)return;W.use.val=b.value;if(!b.value.trim()){toast("اكتب جملة الأول");return}
@@ -1882,7 +1960,7 @@ const H={
     W.useBusy=false;render()},
   // sounds
   "s-group":el=>{SG=el.dataset.v;render()},
-  "s-mic":el=>{const w=el.dataset.w;const single=words(w).length===1;mic(el,{auto:single,onDone:t=>{if(!t&&!SR[w])return;SR[w]={ok:judgeSound(w,t),heard:t};D().sounds++;save();render()}})},
+  "s-mic":el=>{const w=el.dataset.w;if(voiceOK())return hearIt(el,w,r=>{if(!r.heard){toast("ما سمعتش حاجة. دوس واتكلم على طول.");return}SR[w]={ok:r.ok,heard:r.heard,tip:r.tip};D().sounds++;save();render();if(!r.ok&&r.tip)toast(r.tip)});const single=words(w).length===1;mic(el,{auto:single,onDone:t=>{if(!t&&!SR[w])return;SR[w]={ok:judgeSound(w,t),heard:t};D().sounds++;save();render()}})},
   // grammar
   "g-check":()=>gCheck(),
   "g-restart":()=>{G.src="base";G.q=gOrder();G.i=0;G.val="";G.res=null;render()},
@@ -1931,13 +2009,19 @@ const H={
   "t-ans":el=>{if(!T||!T.items)return;const x=T.items[T.i],v=Number(el.dataset.v);T.ans.push(v>=0&&x.opts[v]===x.o[0]?1:0);T.i++;
     if(T.i>=T.items.length){if(sample){T.step="write"}else{finishTest(false);return}}render();window.scrollTo(0,0)},
   "t-mic":el=>mic(el,{onFinal:t=>{const b=$("#tW");if(b){b.value=(b.value+t).trimStart();T.write=b.value}}}),
-  "t-ai":()=>{const b=$("#tW");if(b)T.write=b.value;finishTest(true)},
-  "t-skip":()=>finishTest(false),
+  "t-ai":()=>{const b=$("#tW");if(b)T.write=b.value;if(voiceOK()&&!T.audio&&!T.write.trim()){toast("سجّل إجابتك الأول، أو دوس تخطّى.");return}finishTest(true)},
+  "t-skip":()=>{if(REC.on){clearInterval(recTimer);recCancel();T.recOn=false}finishTest(false)},
+  "t-rec":el=>{
+    if(REC.on){clearInterval(recTimer);const {blob,dur}=recStop();T.recOn=false;if(dur<4){toast("التسجيل قصير. اتكلم 30 ثانية على الأقل.");render();return}T.audio={blob,dur,url:URL.createObjectURL(blob)};render();return}
+    try{speechSynthesis.cancel()}catch(e){}
+    recStart().then(()=>{T.recOn=true;render();recTimer=setInterval(()=>{const i=$("#tRecInfo");if(i)i.textContent="🎙️ بيسجّل "+Math.floor((Date.now()-REC.t0)/1000)+" ث. دوس تاني لما تخلص."},250)})
+      .catch(()=>{recCancel();toast("المايك مقفول. اسمح للموقع يستخدم الميكروفون من إعدادات المتصفح وجرّب تاني.")})},
+  "t-play-me":()=>{if(T&&T.audio){try{speechSynthesis.cancel()}catch(e){}new Audio(T.audio.url).play().catch(()=>{})}},
   lazy:()=>{const d=D();d.lazy=!d.lazy;if(d.lazy)d.form=null;save();render()},
   form:el=>{const d=D(),v=el.dataset.v;d.form=d.form===v?null:v;if(d.form)toast("تمام، هدف "+FORM.find(f=>f[0]===v)[1]+" النهارده بقى الضعف. يلا 🔥");save();render()},
   tasbih:el=>{const d=D();d.tasbih=(d.tasbih||0)+1;const b=el.querySelector("b");if(b)b.textContent=d.tasbih;S.updated=Date.now();try{localStorage.setItem("otl_state",JSON.stringify(S))}catch(e){}if(docRef){dirty=true;clearTimeout(saveT);saveT=setTimeout(flush,1500)}},
   ics:()=>{try{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([icsText()],{type:"text/calendar"}));a.download="on-the-line-reminders.ics";document.body.appendChild(a);a.click();a.remove();toast("افتح الملف اللي نزل، وهيضيف التلات تذكيرات للكالندر.")}catch(e){toast("ما قدرتش أنزّل الملف. استخدم زراير Google Calendar.")}},
-  "key-del":()=>{setKey("");sample=null;gModel=null;render();toast("اتمسح المفتاح من المتصفح ده.")},
+  "key-del":()=>{setKey("");setPin("");sample=null;gModel=null;render();toast("اتمسح المفتاح من المتصفح ده.")},
   "reset-ask":()=>{confirmReset=true;render()},
   "reset-no":()=>{confirmReset=false;render()},
   "reset-yes":()=>{const keep={rate:S.rate,slow:S.slow,voice:S.voice};S=Object.assign(blank(),keep);confirmReset=false;W.q=null;G.q=null;save();render();toast("اتمسح. بداية جديدة.")}
