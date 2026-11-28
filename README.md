@@ -8,3 +8,5 @@
 - **مكالمات وإنترفيو HR**: محتاجين مفتاح Gemini مجاني من https://aistudio.google.com/apikey
 
 تقدّمك ومفتاحك محفوظين في المتصفح بتاعك بس.
+
+الجمل (6000 جملة بترجمتها) من مشروع Tatoeba (https://tatoeba.org) عبر OPUS، برخصة CC BY 2.0 FR.

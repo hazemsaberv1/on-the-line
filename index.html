@@ -744,7 +744,7 @@ addDeck("ch",CHUNKS);addDeck("vo",VOCAB);
 const INT=[0,1,3,7,14,30];
 
 /* ---------------- state ---------------- */
-function blank(){return {v:1,updated:0,goal:"both",start:null,tests:[],rules:{},lis:{},srs:{},days:{},gram:{},calls:[],mistakes:[],slow:false,voice:true}}
+function blank(){return {v:1,updated:0,ss:{},slv:{},goal:"both",start:null,tests:[],rules:{},lis:{},srs:{},days:{},gram:{},calls:[],mistakes:[],slow:false,voice:true}}
 let S=blank();
 function D(k){k=k||today();if(!S.days[k])S.days[k]={sounds:0,words:0,gram:0,listen:0,calls:0,use:0,newc:0,shadow:false};return S.days[k]}
 function taskVal(d,t){if(t.manual)return d[t.id]?1:0;return d[t.id]||0}
@@ -754,7 +754,7 @@ function tasks(k){const d=S.days[k||today()];let ts=sample?TASKS:TASKS.filter(t=
   // "في الفورمة": the chosen area gets double the goal and goes first
   if(d&&d.form&&ts.some(t=>t.id===d.form)){ts=ts.map(t=>t.id===d.form?Object.assign({},t,{goal:(t.goal||1)*2,min:t.min*2,d:FORM_D[t.id]||t.d,boost:true}):t);ts.sort((a,b)=>(b.boost?1:0)-(a.boost?1:0))}
   return ts}
-const FORM=[["words","كلمات"],["sounds","أصوات"],["listen","سماع"],["gram","جرامر"],["calls","مكالمات"]];
+const FORM=[["words","كلمات"],["sentences","جمل"],["sounds","أصوات"],["listen","سماع"],["gram","جرامر"],["calls","مكالمات"]];
 const FORM_D={listen:"10 بدل 5",words:"50 كارت بدل 25",sounds:"30 محاولة نطق بدل 15",gram:"20 جملة بدل 10",calls:"مكالمتين بدل واحدة"};
 function dayFrac(k){const d=S.days[k];if(!d)return 0;const TS=tasks(k);let s=0;TS.forEach(t=>{s+=Math.min(1,taskVal(d,t)/(t.goal||1))});return s/TS.length}
 function active(k){const d=S.days[k];return !!d&&((d.sounds||0)+(d.words||0)+(d.gram||0)+(d.listen||0)+(d.calls||0)+(d.use||0)>0||!!d.shadow)}
@@ -1198,9 +1198,10 @@ function vResult(){
 }
 
 /* ---------------- routing ---------------- */
-const TABS=[["today","النهارده"],["words","كلمات"],["sounds","أصوات"],["listen","سماع"],["grammar","جرامر"],["call","مكالمة"],["progress","تقدّمي"]];
+const TABS=[["today","النهارده"],["words","كلمات"],["sentences","جمل"],["sounds","أصوات"],["listen","سماع"],["grammar","جرامر"],["call","مكالمة"],["progress","تقدّمي"]];
 const sv=p=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 const TIC={
+ sentences:sv('<path d="M4 6h16M4 11h16M4 16h10"/><path d="m17 15 2 2 3-4"/>'),
  listen:sv('<path d="M6 15a6 6 0 1 1 12 0c0 3-2 3.5-3 5s-2 2-3.5 2"/><path d="M9.5 15a2.5 2.5 0 1 1 5 0"/>'),
  today:sv('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/>'),
  words:sv('<rect x="3" y="6" width="14" height="14" rx="2.5"/><path d="M7 3h11a3 3 0 0 1 3 3v11"/>'),
@@ -1224,7 +1225,7 @@ function render(){
   const v=$("#view");
   if(tab==="call"&&call&&callDom){return} // keep live call DOM intact
   callDom=false;
-  v.innerHTML=({test:vTest,today:vToday,words:vWords,sounds:vSounds,listen:vListen,grammar:vGrammar,call:vCall,progress:vProgress})[tab]();
+  v.innerHTML=({test:vTest,today:vToday,words:vWords,sentences:vSentences,sounds:vSounds,listen:vListen,grammar:vGrammar,call:vCall,progress:vProgress})[tab]();
   if(tab==="call"&&call){callDom=true;mountCall()}
 }
 
@@ -1950,6 +1951,105 @@ function vShadow(){
   </section></div>`;
 }
 
+/* ---------------- SENTENCES: 6000 everyday sentences in 12 levels, each with its own test ---------------- */
+let SEN=null,senLoading=false,senErr="";
+// load sentences.json only when the tab is opened (it sits next to the page)
+function loadSentences(){
+  if(SEN||senLoading)return;senLoading=true;senErr="";
+  fetch("sentences.json").then(r=>{if(!r.ok)throw 0;return r.json()}).then(d=>{SEN=d.levels;senLoading=false;render()})
+    .catch(()=>{senLoading=false;senErr="ما قدرتش أحمّل الجمل. اتأكد من النت واعمل refresh.";render()});
+}
+const SEN_CEFR=["A1","A1","A2","A2","A2+","B1","B1","B1+","B1+","B2","B2","B2+"];
+// the placement test opens the levels up to the learner's own level
+function senStartLevel(){return [1,3,5,7,9,11][lvl()]||1}
+function senOpen(L){if(L<=senStartLevel())return true;const p=(S.slv||{})[L-1];return !!(p&&p.passed)}
+function senLearned(L){const st=S.ss||{};let n=0;for(let i=0;i<500;i++){const s=st[L+":"+i];if(s&&s.b>=3)n++}return n}
+let SS={L:null,mode:"learn",q:null,i:0,rev:false,heard:null,test:null};
+function senSay(text){primeAudio();if(voiceOK()&&S.gvoice!==false&&!ttsOff)playLine("a",text);else say(text)}
+function senBuildQ(L){
+  const st=S.ss||{},k=today(),due=[],fresh=[];
+  for(let i=0;i<SEN[L-1].length;i++){const s=st[L+":"+i];if(!s)fresh.push(i);else if(s.due<=k)due.push(i)}
+  const newToday=Object.keys(st).filter(id=>st[id].first===k).length;
+  return shuffle(due).concat(fresh.slice(0,Math.max(0,20-newToday)));
+}
+function vSentences(){
+  if(!SEN){loadSentences();return `<div class="stack"><section class="panel stack"><h3>6000 جملة</h3><p class="muted">${senErr?esc(senErr):'<span class="spin"></span> بحمّل الجمل...'}</p></section></div>`}
+  if(SS.L&&SS.mode==="test")return vSenTest();
+  if(SS.L)return vSenLevel();
+  const slv=S.slv||{};
+  return `<div class="stack">
+    <section class="panel stack" style="gap:8px"><h3>أهم 6000 جملة</h3>
+      <p class="small muted" style="max-width:62ch">جمل يومية بترجمتها بالعربي ونطقها، في 12 ليفل من الأسهل للأصعب. كل ليفل فيه 500 جملة واختبار. لو جبت 80% أو أكتر في الاختبار، الليفل اللي بعده بيتفتح. الليفلات اللي على قد مستواك من اختبار المستوى مفتوحة من الأول.</p></section>
+    <div class="grid3">${SEN.map((_,i)=>{const L=i+1,open=senOpen(L),p=slv[L],n=senLearned(L);
+      return `<button class="tile" style="grid-template-columns:44px minmax(0,1fr);${open?"":"opacity:.55"}" data-act="sen-open" data-l="${L}" ${open?"":"disabled"}>
+        <span class="mini" style="--p:${Math.round(n/5)};width:44px;height:44px"><b>${p&&p.passed?"✓":open?L:"🔒"}</b></span>
+        <span style="min-width:0"><span class="t">ليفل ${L}</span> <span class="pill">${SEN_CEFR[i]}</span><br><span class="muted small">${n}/500 ثابتة${p?` · أحسن اختبار ${p.best}%`:""}</span></span></button>`}).join("")}</div>
+    <p class="small muted">الجمل والترجمة من مشروع <a href="https://tatoeba.org" target="_blank" rel="noopener">Tatoeba</a> عبر OPUS، برخصة CC BY 2.0 FR. الترجمة بالفصحى.</p>
+  </div>`;
+}
+function vSenLevel(){
+  const L=SS.L,arr=SEN[L-1],p=(S.slv||{})[L];
+  const head=`<section class="panel stack" style="gap:10px"><div class="row between"><h3>ليفل ${L} <span class="pill">${SEN_CEFR[L-1]}</span></h3><button class="btn ghost" data-act="sen-back">كل الليفلات</button></div>
+    <div class="row" style="gap:6px"><button class="chip" data-act="sen-mode" data-v="learn" aria-pressed="${SS.mode==="learn"}">اتعلّم</button><button class="chip" data-act="sen-mode" data-v="list" aria-pressed="${SS.mode==="list"}">كل الجمل</button><button class="chip" data-act="sen-test" aria-pressed="false">اختبار الليفل</button></div>
+    <span class="small muted">${senLearned(L)}/500 ثابتة${p?` · أحسن اختبار ${p.best}%${p.passed?" ✓":""}`:" · لسه ما عملتش الاختبار"}</span></section>`;
+  if(SS.mode==="list")return `<div class="stack">${head}<section class="panel">${arr.map(([en,ar],i)=>`<div class="list-item"><div style="min-width:0"><div class="en"><b>${esc(en)}</b></div><div class="small muted">${esc(ar)}</div></div><button class="ibtn" data-act="sen-say" data-i="${i}" aria-label="اسمع">${IC.spk}</button></div>`).join("")}</section></div>`;
+  if(!SS.q)SS.q=senBuildQ(L);
+  if(SS.i>=SS.q.length)return `<div class="stack">${head}<section class="panel stack"><div class="note">خلّصت جمل النهارده في الليفل ده. ارجع بكرة للمراجعة، أو جرّب الاختبار.</div><div class="row"><button class="btn primary" data-act="sen-test">اختبار الليفل</button><button class="btn" data-act="sen-more">20 جملة كمان</button></div></section></div>`;
+  const i=SS.q[SS.i],[en,ar]=arr[i],h=SS.heard;
+  return `<div class="stack">${head}<section class="card">
+    <div class="row between"><span class="pill">قولها بالإنجليزي</span><span class="mono small muted">${SS.i+1}/${SS.q.length}</span></div>
+    <div class="prompt">${esc(ar)}</div>
+    <div class="row">${micb("sen-mic")}<span class="small muted">${voiceOK()?"دوس واتكلم، وGemini هيقولك نطقك صح ولا لأ":"قولها بصوت عالي قبل ما تكشفها"}</span></div>
+    ${h?`<div class="heard ${h.ok?"good":"bad"}">${h.ok?"صح! ":"سمعتك قلت: "}<span class="en">${esc(h.text||"—")}</span>${!h.ok&&h.tip?`<div style="margin-top:4px;color:var(--ink)">${esc(h.tip)}</div>`:""}</div>`:""}
+    ${SS.rev?`<div class="row" style="gap:8px"><div class="answer en">${esc(en)}</div><button class="ibtn" data-act="sen-say" data-i="${i}" aria-label="اسمع">${IC.spk}</button></div>
+      <div class="rate"><button class="btn" data-act="sen-rate" data-r="0">نسيتها</button><button class="btn" data-act="sen-rate" data-r="1">صعبة</button><button class="btn primary" data-act="sen-rate" data-r="2">سهلة</button></div>`
+     :`<button class="btn primary" data-act="sen-reveal">اكشف الجملة</button>`}
+  </section></div>`;
+}
+function senRate(r){
+  const L=SS.L,i=SS.q[SS.i],id=L+":"+i,k=today(),st=S.ss=S.ss||{};let s=st[id];
+  if(!s)s={b:0,due:k,first:k};
+  if(r===0){s.b=1;s.due=k;if(SS.q.filter(x=>x===i).length<3)SS.q.push(i)}
+  else if(r===1){s.b=Math.max(1,s.b);s.due=addDays(k,1)}
+  else{s.b=Math.min(5,s.b+1);s.due=addDays(k,INT[s.b])}
+  st[id]=s;D().words++;save();SS.i++;SS.rev=false;SS.heard=null;render();
+}
+/* --- level test: 20 questions, three kinds --- */
+function senMakeTest(L){
+  const arr=SEN[L-1],idx=shuffle(arr.map((_,i)=>i)).slice(0,20),pickO=(n,not)=>shuffle(arr.map((_,i)=>i).filter(i=>i!==not)).slice(0,n);
+  return idx.map((i,n)=>{const [en,ar]=arr[i],kind=n%3;
+    if(kind===0)return {kind:"tr",q:en,a:ar,opts:shuffle([ar].concat(pickO(3,i).map(j=>arr[j][1]))),ar:true};
+    if(kind===1)return {kind:"listen",say:en,hint:ar,q:"اسمع واختار الجملة اللي اتقالت",a:en,opts:shuffle([en].concat(pickO(3,i).map(j=>arr[j][0])))};
+    const ws=en.split(" "),cand=ws.map((w,j)=>({w:w.replace(/[^A-Za-z']/g,""),j})).filter(x=>x.w.length>=3&&x.j>0);
+    const c=cand.length?cand[Math.floor(Math.random()*cand.length)]:{w:ws[0].replace(/[^A-Za-z']/g,""),j:0};
+    const pool=[...new Set(arr.flatMap(([e])=>e.split(" ").map(x=>x.replace(/[^A-Za-z']/g,""))).filter(x=>x.length>=3&&x.toLowerCase()!==c.w.toLowerCase()))];
+    const q=ws.map((w,j)=>j===c.j?w.replace(c.w,"___"):w).join(" ");
+    return {kind:"cloze",q,hint:ar,a:c.w,opts:shuffle([c.w].concat(shuffle(pool).slice(0,3)))};
+  });
+}
+function vSenTest(){
+  const T_=SS.test,L=SS.L;
+  if(T_.i>=T_.items.length){
+    const ok=T_.ans.filter(Boolean).length,pct=Math.round(ok/T_.items.length*100),passed=pct>=80;
+    const wrong=T_.items.filter((_,i)=>!T_.ans[i]);
+    return `<div class="stack"><section class="panel stack" style="gap:14px">
+      <div class="row between"><h3>نتيجة اختبار ليفل ${L}</h3><button class="btn ghost" data-act="sen-back">كل الليفلات</button></div>
+      <div class="row" style="gap:16px"><div class="score">${pct}%</div><div>${passed?`<span class="pill good">نجحت${L<12?" · ليفل "+(L+1)+" اتفتح":""}</span>`:`<span class="pill bad">محتاج 80% عشان الليفل اللي بعده يتفتح</span>`}</div></div>
+      ${wrong.length?`<div><h3 style="margin-bottom:6px">راجع دول</h3>${wrong.map(x=>`<div class="mis"><div class="en better">${esc(x.kind==="cloze"?x.q.replace("___",x.a):x.kind==="tr"?x.q:x.a)}</div><div class="small muted">${esc(x.kind==="tr"?x.a:x.hint||"")}</div></div>`).join("")}</div>`:""}
+      <div class="row"><button class="btn primary" data-act="sen-test">اختبار تاني</button>${passed&&L<12?`<button class="btn" data-act="sen-open" data-l="${L+1}">ليفل ${L+1}</button>`:`<button class="btn" data-act="sen-mode" data-v="learn">اتعلّم جمل الليفل</button>`}</div>
+    </section></div>`;
+  }
+  const x=T_.items[T_.i],N=T_.items.length,qh=esc(x.q).replace("___",'<span class="blank"></span>');
+  return `<div class="stack"><section class="card" style="min-height:0">
+    <div class="row between"><span class="pill">${x.kind==="tr"?"اختار الترجمة":x.kind==="listen"?"سماع":"كمّل الجملة"} · ليفل ${L}</span><span class="mono small muted">${T_.i+1}/${N}</span></div>
+    <div class="bar"><i style="width:${Math.round(T_.i/N*100)}%"></i></div>
+    ${x.kind==="listen"?`<div class="row" style="gap:16px"><button class="playbig" data-act="sen-tplay" aria-label="شغّل الجملة">${IC.spk}</button><span class="muted small">${esc(x.q)}</span></div>`:`<div class="qtext en">${qh}</div>`}
+    ${x.kind==="cloze"&&x.hint?`<div class="small muted">${esc(x.hint)}</div>`:""}
+    <div class="opts">${x.opts.map((o,j)=>{const st=T_.pick==null?"":(o===x.a?"border-color:var(--good);background:var(--good-soft)":(j===T_.pick?"border-color:var(--bad);background:var(--bad-soft)":""));return `<button class="opt ${x.ar?"ar":""}" data-act="sen-tans" data-v="${j}" style="${st}" ${T_.pick!=null?"disabled":""}>${esc(o)}</button>`}).join("")}</div>
+    ${T_.pick!=null?`<button class="btn primary" data-act="sen-tnext" style="align-self:flex-start">${T_.i+1<N?"السؤال اللي بعده":"شوف النتيجة"}</button>`:""}
+  </section></div>`;
+}
+
 /* ---------------- pronunciation check by Gemini (Sounds + Words) ---------------- */
 const SOUND_TIPS={
   TH_S:"TH مش S: طلّع طرف لسانك بين سنانك وانفخ هوا بالراحة، زي حرف الثاء.",
@@ -2212,6 +2312,22 @@ const H={
   "push-on":()=>{if(!OS){toast("لحظة، الإشعارات لسه بتحمّل. جرّب كمان ثانيتين.");return}
     OS.Notifications.requestPermission().then(()=>{osPerm=!!OS.Notifications.permission;render();toast(osPerm?"🔔 تمام، الإشعارات اشتغلت":"الإشعارات اترفضت. تقدر تفعّلها من إعدادات المتصفح للموقع ده.")}).catch(()=>toast("ما قدرتش أفعّل الإشعارات هنا."))},
   "ios-ok":()=>{try{localStorage.setItem("otl_ios_tip","1")}catch(e){}render()},
+  "sen-open":el=>{SS={L:Number(el.dataset.l),mode:"learn",q:null,i:0,rev:false,heard:null,test:null};render();window.scrollTo(0,0)},
+  "sen-back":()=>{SS={L:null,mode:"learn",q:null,i:0,rev:false,heard:null,test:null};render();window.scrollTo(0,0)},
+  "sen-mode":el=>{SS.mode=el.dataset.v;SS.test=null;if(SS.mode==="learn"&&!SS.q){SS.i=0}render()},
+  "sen-more":()=>{const L=SS.L,st=S.ss||{},fresh=[];for(let i=0;i<500&&fresh.length<20;i++)if(!st[L+":"+i])fresh.push(i);SS.q=fresh;SS.i=0;if(!fresh.length)toast("خلّصت كل جمل الليفل ده. جرّب الاختبار.");render()},
+  "sen-reveal":()=>{SS.rev=true;render()},
+  "sen-rate":el=>senRate(Number(el.dataset.r)),
+  "sen-say":el=>senSay(SEN[SS.L-1][Number(el.dataset.i)][0]),
+  "sen-mic":el=>{const en=SEN[SS.L-1][SS.q[SS.i]][0];if(isStarting()){SS.heard=null;const h=document.querySelector(".card .heard");if(h)h.remove()}
+    if(voiceOK())return hearIt(el,en,r=>{if(!r.heard){toast("ما سمعتش حاجة. دوس واتكلم على طول.");return}SS.heard={text:r.heard,ok:r.ok,tip:r.tip};SS.rev=true;D().sounds++;save();render()});
+    mic(el,{onDone:t=>{if(!t)return;const tw=words(en),hw=new Set(words(t));let hit=0;tw.forEach(w=>{if(hw.has(w))hit++});SS.heard={text:t,ok:hit/tw.length>=.75};SS.rev=true;D().sounds++;save();render()}})},
+  "sen-test":()=>{SS.mode="test";SS.test={items:senMakeTest(SS.L),i:0,ans:[],pick:null};render();window.scrollTo(0,0)},
+  "sen-tplay":()=>{const x=SS.test.items[SS.test.i];if(x&&x.say)senSay(x.say)},
+  "sen-tans":el=>{const T_=SS.test;if(T_.pick!=null)return;const x=T_.items[T_.i],j=Number(el.dataset.v);T_.pick=j;T_.ans.push(x.opts[j]===x.a);render()},
+  "sen-tnext":()=>{const T_=SS.test;T_.i++;T_.pick=null;
+    if(T_.i>=T_.items.length){const pct=Math.round(T_.ans.filter(Boolean).length/T_.items.length*100),L=SS.L;S.slv=S.slv||{};const p=S.slv[L]||{best:0,passed:false};p.best=Math.max(p.best,pct);if(pct>=80)p.passed=true;S.slv[L]=p;D().gram+=T_.items.length;save();if(pct>=80&&L<12)toast("🎉 ليفل "+(L+1)+" اتفتح!")}
+    render();window.scrollTo(0,0)},
   "sh-open":el=>{shStop();SH.id=el.dataset.id;SH.i=-1;render();window.scrollTo(0,0)},
   "sh-back":()=>{shStop();SH.id=null;render()},
   "sh-play":()=>{primeAudio();shPlay(SH.i>0?SH.i:0)},
